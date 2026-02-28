@@ -341,4 +341,9 @@ async function startServer() {
   });
 }
 
-startServer();
+const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.AWS_REGION);
+if (!isVercelRuntime) {
+  startServer();
+}
+
+export default app;
