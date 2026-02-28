@@ -493,6 +493,18 @@ function normalizeSoapData(
   return data;
 }
 
+function isWeakTranscriptValue(raw: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized.includes("[mock]") ||
+    normalized.includes("chưa rõ transcript") ||
+    normalized.includes("không rõ transcript") ||
+    normalized.includes("không thể nhận diện nội dung thật") ||
+    normalized.includes("chưa có transcript thật")
+  );
+}
+
 const processAudioHandler = async (req: express.Request, res: express.Response) => {
   try {
     const file = req.file;
@@ -501,6 +513,7 @@ const processAudioHandler = async (req: express.Request, res: express.Response) 
       req.body.recordingAudience === "patient_only" ? "patient_only" : "doctor_patient";
     const examStartedAt = typeof req.body.examStartedAt === "string" ? req.body.examStartedAt : "";
     const examEndedAt = typeof req.body.examEndedAt === "string" ? req.body.examEndedAt : "";
+    const transcriptHint = typeof req.body.transcriptHint === "string" ? req.body.transcriptHint.trim() : "";
 
     if (!file) {
       return res.status(400).json({ error: "No audio file provided" });
@@ -591,7 +604,7 @@ ${mode === "dictation" ? "- Giả định bác sĩ đang đọc theo cấu trúc
         console.error("Coerced payload validation failed, returning minimum-safe draft:", coercedParsed.error);
         const emergencyDraft = coerceSoapPayload({}, normalizedMode);
         const rawRecord = toRecord(rawCandidate);
-        const transcriptFallback = toStringSafe(rawRecord.transcript, responseText).trim();
+        const transcriptFallback = toStringSafe(rawRecord.transcript, transcriptHint, responseText).trim();
         emergencyDraft.transcript = transcriptFallback || "Chưa rõ transcript";
         emergencyDraft.missing_info_flags = [
           ...emergencyDraft.missing_info_flags,
@@ -603,6 +616,10 @@ ${mode === "dictation" ? "- Giả định bác sĩ đang đọc theo cấu trúc
         ];
         parsedData = soapSchema.parse(emergencyDraft);
       }
+    }
+
+    if (transcriptHint && isWeakTranscriptValue(parsedData.transcript || "")) {
+      parsedData.transcript = transcriptHint;
     }
 
     const normalized = normalizeSoapData(parsedData, examStartedAt, examEndedAt);

@@ -167,6 +167,8 @@ export default function App() {
   const timerRef = useRef<number | null>(null);
   const recordingStartMsRef = useRef<number | null>(null);
   const transcriptPanelRef = useRef<HTMLDivElement | null>(null);
+  const liveTranscriptRef = useRef('');
+  const interimTranscriptRef = useRef('');
 
   const emptySoap: SoapData = {
     mode: 'in_room',
@@ -197,6 +199,14 @@ export default function App() {
     disclaimer: ''
   };
   const [formSoap, setFormSoap] = useState<SoapData>(emptySoap);
+
+  useEffect(() => {
+    liveTranscriptRef.current = liveTranscript;
+  }, [liveTranscript]);
+
+  useEffect(() => {
+    interimTranscriptRef.current = interimTranscript;
+  }, [interimTranscript]);
 
   const patientVoiceQuestions = useMemo(() => mandatoryVoiceQuestions, []);
   const demoVoiceCases = useMemo<DemoVoiceCase[]>(
@@ -2064,6 +2074,32 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     return hydrateSoapFromTranscript(enriched, transcript, { overwriteExisting: false });
   };
 
+  const hasSparseStructuredData = (data: SoapData) => {
+    const keyFields = [
+      data.header.patient_name,
+      data.header.patient_identifier,
+      data.subjective.chief_complaint,
+      data.subjective.hpi_summary,
+      data.assessment.primary_diagnosis,
+      data.plan.instructions,
+      data.plan.follow_up,
+    ];
+    const filledCount = keyFields.filter((value) => normalizeCapturedValue(value || '').length > 0).length;
+    return filledCount < 2;
+  };
+
+  const isWeakTranscript = (raw: string) => {
+    const normalized = toAsciiLower(normalizeCapturedValue(raw || ''));
+    if (!normalized) return true;
+    return (
+      normalized.includes('[mock]') ||
+      normalized.includes('chua ro transcript') ||
+      normalized.includes('khong ro transcript') ||
+      normalized.includes('khong the nhan dien noi dung that') ||
+      normalized.includes('chua co transcript that')
+    );
+  };
+
   const applyDraftFromTranscript = (rawTranscript?: string, options: { overwriteExisting?: boolean } = {}) => {
     const transcriptRaw = (rawTranscript ?? `${liveTranscript} ${interimTranscript}`).trim();
     if (!transcriptRaw) return false;
@@ -2896,6 +2932,8 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
 
       setLiveTranscript('');
       setInterimTranscript('');
+      liveTranscriptRef.current = '';
+      interimTranscriptRef.current = '';
       setShowSplitView(true);
       isRecordingRef.current = true;
 
@@ -2916,7 +2954,14 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
               interim += event.results[i][0].transcript;
             }
           }
-          if (final) setLiveTranscript(prev => prev + final);
+          if (final) {
+            setLiveTranscript(prev => {
+              const next = prev + final;
+              liveTranscriptRef.current = next;
+              return next;
+            });
+          }
+          interimTranscriptRef.current = interim;
           setInterimTranscript(interim);
         };
         
@@ -3037,9 +3082,11 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     setShowSplitView(true);
 
     const formData = new FormData();
+    const transcriptHint = `${liveTranscriptRef.current} ${interimTranscriptRef.current}`.trim();
     formData.append('audio', targetFile);
     formData.append('mode', mode);
     formData.append('recordingAudience', recordingAudience);
+    if (transcriptHint) formData.append('transcriptHint', transcriptHint);
     if (recordingStartedAt) formData.append('examStartedAt', asIsoString(recordingStartedAt));
     if (recordingEndedAt) formData.append('examEndedAt', asIsoString(recordingEndedAt));
 
@@ -3055,7 +3102,14 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       }
 
       const data: SoapData = await response.json();
-      const enriched = enrichSoapData(data);
+      const dataWithTranscript =
+        transcriptHint && isWeakTranscript(data.transcript)
+          ? { ...data, transcript: transcriptHint }
+          : data;
+      let enriched = enrichSoapData(dataWithTranscript);
+      if (transcriptHint && hasSparseStructuredData(dataWithTranscript)) {
+        enriched = hydrateSoapFromTranscript(enriched, transcriptHint, { overwriteExisting: true });
+      }
       setResult(enriched);
       setFormSoap(enriched);
       setTemplateExampleNotice(false);
