@@ -82,6 +82,147 @@ const soapSchema = z.object({
 
 const jsonSchema = zodToJsonSchema(soapSchema as any, { target: "openApi3" });
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function toStringSafe(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return fallback;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => toStringSafe(item).trim())
+    .filter(Boolean);
+}
+
+function coerceMedications(value: unknown): Array<{ name: string; dose: string; duration: string }> {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        const obj = toRecord(item);
+        const name = toStringSafe(obj.name).trim();
+        const dose = toStringSafe(obj.dose).trim();
+        const duration = toStringSafe(obj.duration).trim();
+        if (!name && !dose && !duration) return null;
+        return {
+          name: name || "Thuốc theo ghi nhận",
+          dose: dose || "",
+          duration: duration || "",
+        };
+      })
+      .filter((item): item is { name: string; dose: string; duration: string } => Boolean(item));
+  }
+
+  const asText = toStringSafe(value).trim();
+  if (!asText) return [];
+  return [{ name: asText, dose: "", duration: "" }];
+}
+
+function parseJsonLoose(text: string): unknown {
+  const raw = text.trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // continue
+  }
+
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {
+      // continue
+    }
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const candidate = raw.slice(start, end + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+  }
+
+  throw new Error("Model did not return parseable JSON");
+}
+
+function coerceSoapPayload(
+  rawInput: unknown,
+  fallbackMode: "in_room" | "dictation",
+  responseText: string,
+) {
+  const raw = toRecord(rawInput);
+  const header = toRecord(raw.header);
+  const subjective = toRecord(raw.subjective);
+  const assessmentRaw = raw.assessment;
+  const assessment = toRecord(assessmentRaw);
+  const planRaw = raw.plan;
+  const plan = toRecord(planRaw);
+
+  const normalizedMode = raw.mode === "in_room" || raw.mode === "dictation" ? raw.mode : fallbackMode;
+  const normalizedLanguage = toStringSafe(raw.language).toLowerCase().startsWith("vi") ? "vi" : "vi";
+  const assessmentText = toStringSafe(assessmentRaw).trim();
+  const planText = toStringSafe(planRaw).trim();
+
+  return {
+    mode: normalizedMode,
+    language: normalizedLanguage,
+    transcript: toStringSafe(raw.transcript, responseText).trim(),
+    header: {
+      encounter_id: toStringSafe(header.encounter_id),
+      datetime: toStringSafe(header.datetime),
+      department: toStringSafe(header.department),
+      doctor: toStringSafe(header.doctor),
+      patient_identifier: toStringSafe(header.patient_identifier),
+      sex: toStringSafe(header.sex),
+      patient_info: toStringSafe(header.patient_info),
+      patient_name: toStringSafe(header.patient_name),
+      dob: toStringSafe(header.dob),
+      age: toStringSafe(header.age),
+      exam_started_at: toStringSafe(header.exam_started_at),
+      exam_ended_at: toStringSafe(header.exam_ended_at),
+    },
+    subjective: {
+      chief_complaint: toStringSafe(subjective.chief_complaint),
+      hpi_summary: toStringSafe(subjective.hpi_summary),
+      onset: toStringSafe(subjective.onset),
+      progression: toStringSafe(subjective.progression),
+      aggravating_alleviating_factors: toStringSafe(subjective.aggravating_alleviating_factors),
+      allergies: toStringSafe(subjective.allergies),
+      current_meds: toStringSafe(subjective.current_meds),
+      relevant_pmh: toStringSafe(subjective.relevant_pmh),
+    },
+    assessment: {
+      primary_diagnosis: toStringSafe(assessment.primary_diagnosis, assessmentText),
+      differential_diagnosis: toStringSafe(assessment.differential_diagnosis),
+      risk_level: toStringSafe(assessment.risk_level),
+    },
+    plan: {
+      labs_imaging: toStringSafe(plan.labs_imaging),
+      medications: coerceMedications(plan.medications),
+      instructions: toStringSafe(plan.instructions, planText),
+      follow_up: toStringSafe(plan.follow_up),
+      red_flags: toStringSafe(plan.red_flags),
+    },
+    note_text: toStringSafe(raw.note_text),
+    missing_info_flags: toStringArray(raw.missing_info_flags),
+    uncertainty_flags: toStringArray(raw.uncertainty_flags),
+    disclaimer: toStringSafe(
+      raw.disclaimer,
+      "AI chỉ soạn nháp; bác sĩ cần xác nhận nội dung trước khi lưu chính thức.",
+    ),
+  };
+}
+
 function createMockSoap(mode: "in_room" | "dictation", file?: Express.Multer.File) {
   const now = new Date().toLocaleString("vi-VN");
   const fileInfo = file ? `${file.originalname} (${Math.round(file.size / 1024)}KB)` : "audio chưa rõ";
@@ -288,10 +429,25 @@ ${mode === "dictation" ? "- Giả định bác sĩ đang đọc theo cấu trúc
       throw new Error("Empty response from Gemini");
     }
 
+    const normalizedMode = mode as "in_room" | "dictation";
     let parsedData;
     try {
-      const rawJson = JSON.parse(responseText);
-      parsedData = soapSchema.parse(rawJson);
+      const rawJson = parseJsonLoose(responseText);
+      const strictParsed = soapSchema.safeParse(rawJson);
+      if (strictParsed.success) {
+        parsedData = strictParsed.data;
+      } else {
+        const coerced = coerceSoapPayload(rawJson, normalizedMode, responseText);
+        const coercedParsed = soapSchema.safeParse(coerced);
+        if (!coercedParsed.success) {
+          console.error("Coerced payload validation failed:", coercedParsed.error);
+          return res.status(500).json({
+            error: "AI response format invalid after normalization.",
+            details: coercedParsed.error.message,
+          });
+        }
+        parsedData = coercedParsed.data;
+      }
     } catch (parseError) {
       console.error("JSON Parse or Validation Error:", parseError);
       console.error("Raw Response:", responseText);
