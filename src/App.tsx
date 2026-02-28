@@ -998,10 +998,18 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   };
 
   const parseNameFromText = (text: string) => {
+    const explicitNameMatch = text.match(
+      /(?:họ\s*và\s*tên|ho\s*va\s*ten|họ\s*tên|ho\s*ten|tên\s*bệnh\s*nhân|ten\s*benh\s*nhan)\s*(?:là|la|:)?\s*([A-Za-zÀ-ỹ\s]{2,80}?)(?=(?:\b(?:cccd|căn\s*cước|can\s*cuoc|cmnd|chứng\s*minh|chung\s*minh|mã\s*bn|ma\s*bn|mã\s*bệnh|ma\s*benh|ngày\s*sinh|ngay\s*sinh|giới\s*tính|gioi\s*tinh|lý\s*do|ly\s*do|triệu\s*chứng|trieu\s*chung|tiền\s*sử|tien\s*su|dị\s*ứng|di\s*ung|thuốc|thuoc)\b|[,.!?\n]|$))/i,
+    );
+    if (explicitNameMatch?.[1]) {
+      const cleaned = cleanCandidateName(explicitNameMatch[1]);
+      if (cleaned) return cleaned;
+    }
+
     const labeled = extractLabeledValue(
       text,
       ['họ và tên', 'họ tên', 'tên bệnh nhân', 'họ tên bệnh nhân'],
-      ['năm sinh', 'giới tính', 'cccd', 'lý do', 'triệu chứng'],
+      ['năm sinh', 'ngày sinh', 'giới tính', 'cccd', 'căn cước', 'cmnd', 'mã bệnh', 'lý do', 'triệu chứng'],
     );
     if (labeled) {
       return cleanCandidateName(labeled);
@@ -1930,10 +1938,24 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     const next: SoapData = JSON.parse(JSON.stringify(base));
     const now = recordingEndedAt || new Date();
     const nowText = now.toLocaleString('vi-VN');
+    const isUnknownPlaceholder = (value: string) => {
+      const normalized = toAsciiLower(normalizeCapturedValue(value));
+      return [
+        'chua ro',
+        'khong ro',
+        'khong xac dinh',
+        'unknown',
+        'n/a',
+        'na',
+        'null',
+        'undefined',
+      ].includes(normalized);
+    };
     const assign = (current: string, candidate: string) => {
       const normalized = normalizeCapturedValue(candidate || '');
       if (!normalized) return current;
-      if (overwrite || !current.trim()) return normalized;
+      const currentNormalized = normalizeCapturedValue(current || '');
+      if (overwrite || !currentNormalized || isUnknownPlaceholder(currentNormalized)) return normalized;
       return current;
     };
 

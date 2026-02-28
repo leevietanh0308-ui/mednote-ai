@@ -188,6 +188,36 @@ function parseJsonLoose(text: string): unknown {
   throw new Error("Model did not return parseable JSON");
 }
 
+function inferOnsetFromText(...inputs: unknown[]): string {
+  const text = inputs
+    .map((value) => toStringSafe(value).trim())
+    .filter(Boolean)
+    .join(". ");
+  if (!text) return "";
+
+  const clean = (raw: string) =>
+    raw
+      .replace(/^[\s:;,\-–—]+/, "")
+      .replace(/[.;,\s]+$/, "")
+      .replace(/^(?:là|khoảng|tầm|được)\s+/i, "")
+      .trim();
+
+  const patterns: RegExp[] = [
+    /(?:thời\s*điểm\s*)?(?:triệu\s*chứng\s*bắt\s*đầu|khởi\s*phát|onset)\s*(?:là|:)?\s*([^.?!\n,]{3,120})/i,
+    /(?:kéo\s*dài|tiếp\s*diễn|diễn\s*tiến)\s*(?:được|khoảng|tầm)?\s*(\d+\s*(?:giờ|ngày|tuần|tháng|năm))/i,
+    /(?:cách\s*đây|từ|khoảng)\s*(\d+\s*(?:giờ|ngày|tuần|tháng|năm)\s*(?:trước)?)/i,
+    /(hôm\s*qua|hôm\s*kia|tối\s*qua|đêm\s*qua|sáng\s*nay|chiều\s*nay|trưa\s*nay)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const captured = clean(match?.[1] || "");
+    if (captured) return captured;
+  }
+
+  return "";
+}
+
 function coerceSoapPayload(
   rawInput: unknown,
   fallbackMode: "in_room" | "dictation",
@@ -217,6 +247,13 @@ function coerceSoapPayload(
   const legacyChiefComplaint = toStringSafe(soapSubjective.chief_complaint);
   const legacyHpi = toStringSafe(soapSubjective.history_of_present_illness);
   const fallbackTranscript = [legacyChiefComplaint, legacyHpi].filter(Boolean).join(". ");
+  const inferredOnset = inferOnsetFromText(
+    toStringSafe(subjective.onset),
+    toStringSafe(soapSubjective.onset),
+    legacyHpi,
+    toStringSafe(raw.transcript),
+    fallbackTranscript,
+  );
   const objectiveChunks = [
     toStringSafe(soapObjective.vitals),
     toStringSafe(soapObjective.labs),
@@ -245,7 +282,7 @@ function coerceSoapPayload(
     subjective: {
       chief_complaint: toStringSafe(subjective.chief_complaint) || legacyChiefComplaint,
       hpi_summary: toStringSafe(subjective.hpi_summary) || legacyHpi,
-      onset: toStringSafe(subjective.onset),
+      onset: toStringSafe(subjective.onset) || toStringSafe(soapSubjective.onset) || inferredOnset,
       progression: toStringSafe(subjective.progression),
       aggravating_alleviating_factors: toStringSafe(subjective.aggravating_alleviating_factors),
       allergies: toStringSafe(subjective.allergies) || toStringSafe(soapSubjective.allergies),
