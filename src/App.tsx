@@ -1353,7 +1353,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   interface InferenceGate {
     readyForDifferential: boolean;
     missingForDifferential: string[];
-    severitySignal: string;
     associatedSymptomCount: number;
     hasRiskFactor: boolean;
     suggestedQuestions: string[];
@@ -1371,19 +1370,50 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     matchedComplaints: string[];
     matchedPmh: string[];
     recommendedQuestions: string[];
-    hasVitalsMention: boolean;
   }
 
-  const hasVitalsMentionInText = (text: string) =>
-    /(nhiệt độ|huyết áp|mạch|nhịp thở|spo2|spo₂|oxy|độ c|độ\s*c)/i.test(text);
+  type ChecklistQuestionId = 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6' | 'q7';
 
-  const extractSeveritySignal = (text: string) => {
-    const normalized = normalizeCapturedValue(text);
-    if (!normalized) return '';
-    const score = normalized.match(/(\d{1,2})\s*(?:\/|trên)\s*10/i);
-    if (score?.[1]) return `${score[1]}/10`;
-    const phrase = normalized.match(/\b(rất nặng|nặng|vừa|nhẹ|dữ dội|âm ỉ|đè nặng)\b/i);
-    return phrase?.[1] || '';
+  const checklistQuestionLabel: Record<ChecklistQuestionId, string> = {
+    q1: 'Họ tên - năm sinh - giới tính',
+    q2: 'CCCD hoặc mã bệnh nhân',
+    q3: 'Lý do khám chính',
+    q4: 'Mô tả triệu chứng hiện tại',
+    q5: 'Mức độ hiện tại + triệu chứng kèm',
+    q6: 'Tiền sử bệnh nền',
+    q7: 'Dị ứng + thuốc đang dùng',
+  };
+
+  const evaluateChecklistAnswers = (draft: SoapData, transcript: string) => {
+    const transcriptSymptoms = parseCurrentSymptomsFromText(transcript || '');
+    const hpiSignals = /đau|sốt|khó thở|choáng|chóng mặt|nôn|tiêu chảy/i.test(draft.subjective.hpi_summary || '');
+    const hasFullHistorySection3 = Boolean(
+      draft.subjective.relevant_pmh.trim() &&
+      draft.subjective.allergies.trim() &&
+      draft.subjective.current_meds.trim(),
+    );
+
+    const qStatus: Record<ChecklistQuestionId, boolean> = {
+      q1: Boolean(
+        draft.header.patient_name.trim() &&
+          draft.header.sex.trim() &&
+          (draft.header.dob.trim() || draft.header.age.trim()),
+      ),
+      q2: Boolean(draft.header.patient_identifier.trim()),
+      q3: Boolean(draft.subjective.chief_complaint.trim()),
+      q4: Boolean(draft.subjective.hpi_summary.trim()),
+      q5: Boolean(transcriptSymptoms.length || hpiSignals),
+      q6: Boolean(draft.subjective.relevant_pmh.trim()),
+      q7: hasFullHistorySection3,
+    };
+
+    const missingIds = (Object.keys(qStatus) as ChecklistQuestionId[]).filter((id) => !qStatus[id]);
+    return {
+      qStatus,
+      missingIds,
+      missingLabels: missingIds.map((id) => checklistQuestionLabel[id]),
+      completedCount: (Object.keys(qStatus) as ChecklistQuestionId[]).filter((id) => qStatus[id]).length,
+    };
   };
 
   const inferSystemsFromSymptoms = (symptoms: string[]): SystemTag[] => {
@@ -1440,7 +1470,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     context: ClinicalContext,
   ): TriageInsight => {
     const normalizedText = toAsciiLower(`${transcript} ${symptoms.join(' ')}`).replace(/\s+/g, ' ').trim();
-    const hasVitalsMention = hasVitalsMentionInText(transcript);
 
     const matchedRules = redFlagRules.filter((rule) =>
       rule.triggers.some((trigger) => containsClinicalTerm(normalizedText, trigger)),
@@ -1523,7 +1552,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       level === 'emergency'
         ? 'Không trì hoãn. Ưu tiên cấp cứu ngay và xử trí theo quy trình khẩn.'
         : level === 'urgent_same_day'
-          ? `Ưu tiên đánh giá trực tiếp và đo sinh hiệu đầy đủ. ${topRuleRecommendations[0] || ''}`.trim()
+          ? `Ưu tiên đánh giá trực tiếp sớm. ${topRuleRecommendations[0] || ''}`.trim()
           : 'Theo dõi triệu chứng, bổ sung dữ liệu còn thiếu và tái khám theo hẹn nếu không cải thiện.';
 
     return {
@@ -1538,7 +1567,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       matchedComplaints: context.matchedComplaints.map((item) => item.label),
       matchedPmh: context.matchedPmh,
       recommendedQuestions,
-      hasVitalsMention,
     };
   };
 
@@ -1548,24 +1576,13 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     symptoms: string[],
     triage: TriageInsight,
   ): InferenceGate => {
-    const missingForDifferential: string[] = [];
-    const severitySignal = extractSeveritySignal(`${transcript} ${draft.subjective.hpi_summary}`);
+    const checklist = evaluateChecklistAnswers(draft, transcript);
     const associatedSymptomCount = symptoms.length;
     const hasRiskFactor = triage.matchedPmh.length > 0;
-    const highRiskPresentation =
-      triage.level !== 'routine' ||
-      symptoms.some((symptom) => /khó thở|đau ngực|choáng|chóng mặt|ngất|sốt/i.test(symptom));
-
-    if (!draft.subjective.chief_complaint.trim()) missingForDifferential.push('Thiếu lý do khám chính.');
-    if (!severitySignal) missingForDifferential.push('Thiếu mức độ triệu chứng (0-10 hoặc nhẹ/vừa/nặng).');
-    if (associatedSymptomCount < 2 && !hasRiskFactor) {
-      missingForDifferential.push('Cần ít nhất 2 triệu chứng kèm hoặc 1 yếu tố nguy cơ/bệnh nền liên quan.');
-    }
-    if (highRiskPresentation && !triage.hasVitalsMention) {
-      missingForDifferential.push('Thiếu sinh hiệu trong bối cảnh nguy cơ cao, cần đo ngay.');
-    }
+    const missingForDifferential = checklist.missingLabels.map((label) => `Thiếu mục checklist: ${label}.`);
 
     const suggestedQuestions = uniqueValues([
+      ...checklist.missingLabels.map((label) => `Bổ sung mục checklist: ${label}`),
       ...triage.recommendedQuestions,
       ...universalHpiChecklist,
     ]).slice(0, 8);
@@ -1573,7 +1590,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     return {
       readyForDifferential: missingForDifferential.length === 0,
       missingForDifferential: uniqueValues(missingForDifferential),
-      severitySignal,
       associatedSymptomCount,
       hasRiskFactor,
       suggestedQuestions,
@@ -1590,9 +1606,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       return `Chưa đủ dữ kiện để nhận định sâu (insufficient_data). ${topMissing}`;
     }
     if (!symptoms.length && !triage.matchedSystems.length) {
-      return triage.level === 'routine'
-        ? 'Chưa đủ dữ liệu triệu chứng để nhận định sơ bộ.'
-        : 'Có dấu hiệu nguy cơ theo transcript, cần đánh giá trực tiếp và đo sinh hiệu.';
+      return 'Nhận định sơ bộ: Đã đủ checklist tối thiểu nhưng triệu chứng còn mô tả chung, cần bác sĩ xác nhận chẩn đoán cuối cùng.';
     }
     const syndromeBySystem: Partial<Record<SystemTag, string>> = {
       general: 'hội chứng sốt/toàn thân',
@@ -1650,6 +1664,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     if (triage.level === 'emergency') {
       clues.push('Ưu tiên loại trừ nguyên nhân cấp cứu trước khi hoàn thiện chẩn đoán phân biệt.');
     }
+    if (!clues.length) {
+      clues.push('Chẩn đoán phân biệt tạm thời: cần đối chiếu thêm khám lâm sàng và cận lâm sàng để xác nhận.');
+    }
     return uniqueValues(clues).join(' ');
   };
 
@@ -1672,7 +1689,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       }
     }
     if (!draft.subjective.chief_complaint.trim()) flags.push('Thiếu lý do khám chính.');
-    if (!gate.severitySignal) flags.push('Thiếu mức độ triệu chứng (0-10 hoặc nhẹ/vừa/nặng).');
     if (!draft.subjective.relevant_pmh.trim()) flags.push('Thiếu tiền sử bệnh nền quan trọng.');
 
     const allergyText = toAsciiLower(draft.subjective.allergies || '');
@@ -1687,9 +1703,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     if (!hasFoodAllergyStatus) flags.push('Chưa rõ dị ứng thức ăn.');
     if (!draft.subjective.current_meds.trim()) flags.push('Chưa có thông tin thuốc bệnh nhân đã dùng gần đây.');
 
-    if (!triage.hasVitalsMention) {
-      flags.push('Thiếu sinh hiệu (nhiệt độ, mạch, huyết áp, nhịp thở, SpO2), cần đo trực tiếp.');
-    }
     if (triage.level === 'urgent_same_day') {
       flags.push('Có dấu hiệu nguy cơ, cần khám trong ngày hoặc trong 24 giờ.');
     }
@@ -1703,7 +1716,10 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     }
 
     if (!gate.readyForDifferential) {
-      flags.push('Chưa đạt ngưỡng dữ kiện tối thiểu để suy luận chẩn đoán phân biệt.');
+      flags.push('Chưa đạt đủ 7 mục checklist để suy luận chẩn đoán phân biệt.');
+      for (const missing of gate.missingForDifferential.slice(0, 4)) {
+        flags.push(missing);
+      }
       for (const q of gate.suggestedQuestions.slice(0, 3)) {
         flags.push(`Cần hỏi thêm: ${q}`);
       }
@@ -1729,9 +1745,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     }
     if (!gate.readyForDifferential) {
       flags.push('Hệ thống đang ở chế độ insufficient_data: chỉ định hướng hỏi thêm, chưa lập chẩn đoán phân biệt.');
-    }
-    if (triage.level !== 'routine' && !triage.hasVitalsMention) {
-      flags.push('Ca có nguy cơ nhưng chưa có sinh hiệu, cần đo trước khi chốt nhận định.');
     }
     return uniqueValues(flags);
   };
@@ -1862,7 +1875,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     addEvidence('assessment.risk_level', draft.assessment.risk_level, [...triage.redFlags, ...triage.matchedRules]);
 
     addEvidence('plan.medications', medicationsToText(draft.plan.medications), [...triage.redFlags, ...triage.matchedRules]);
-    addEvidence('plan.instructions', draft.plan.instructions, [...triage.redFlags, 'đo sinh hiệu']);
+    addEvidence('plan.instructions', draft.plan.instructions, [...triage.redFlags, 'đánh giá trực tiếp']);
     addEvidence('plan.follow_up', draft.plan.follow_up, ['tái khám', 'trong ngày', '24 giờ', ...triage.redFlags]);
     addEvidence('plan.red_flags', draft.plan.red_flags, [...triage.redFlags]);
 
@@ -2464,25 +2477,10 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   };
 
   const patientChecklistStatus = useMemo(() => {
-    const transcriptSymptoms = parseCurrentSymptomsFromText(soapView.transcript || '');
-    const hpiSignals = /đau|sốt|khó thở|choáng|chóng mặt|nôn|tiêu chảy/i.test(soapView.subjective.hpi_summary || '');
-    const hasFullHistorySection3 = Boolean(
-      soapView.subjective.relevant_pmh.trim() &&
-      soapView.subjective.allergies.trim() &&
-      soapView.subjective.current_meds.trim(),
-    );
-    const qStatus = {
-      q1: Boolean(soapView.header.patient_name.trim() && soapView.header.sex.trim() && (soapView.header.dob.trim() || soapView.header.age.trim())),
-      q2: Boolean(soapView.header.patient_identifier.trim()),
-      q3: Boolean(soapView.subjective.chief_complaint.trim()),
-      q4: Boolean(soapView.subjective.hpi_summary.trim()),
-      q5: Boolean(transcriptSymptoms.length || hpiSignals),
-      q6: Boolean(soapView.subjective.relevant_pmh.trim()),
-      q7: hasFullHistorySection3,
-    };
+    const checklist = evaluateChecklistAnswers(soapView, soapView.transcript || '');
     return patientVoiceQuestions.map((item) => ({
       ...item,
-      done: qStatus[item.id as keyof typeof qStatus] ?? false,
+      done: checklist.qStatus[item.id as keyof typeof checklist.qStatus] ?? false,
     }));
   }, [soapView, patientVoiceQuestions]);
 
