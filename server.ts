@@ -90,6 +90,192 @@ const soapSchema = z.object({
 // Convert Zod schema to JSON schema for Gemini API
 const jsonSchema = zodToJsonSchema(soapSchema as any, { target: "openApi3" });
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const raw = value.trim();
+  if (!raw) return value;
+  if (!((raw.startsWith("{") && raw.endsWith("}")) || (raw.startsWith("[") && raw.endsWith("]")))) {
+    return value;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return value;
+  }
+}
+
+function toStringSafe(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return fallback;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => toStringSafe(item).trim())
+    .filter(Boolean);
+}
+
+function toFlagArray(value: unknown): string[] {
+  const direct = toStringArray(value);
+  if (direct.length > 0) return direct;
+
+  const parsed = parseMaybeJson(value);
+  const record = toRecord(parsed);
+  const keys = Object.keys(record).filter((key) => record[key] === true);
+  if (keys.length === 0) return [];
+  return keys.map((key) => key.replace(/_/g, " "));
+}
+
+function coerceMedications(value: unknown): Array<{ name: string; dose: string; duration: string }> {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        const obj = toRecord(item);
+        const name = toStringSafe(obj.name).trim();
+        const dose = toStringSafe(obj.dose).trim();
+        const duration = toStringSafe(obj.duration).trim();
+        if (!name && !dose && !duration) return null;
+        return {
+          name: name || "Thuốc theo ghi nhận",
+          dose: dose || "",
+          duration: duration || "",
+        };
+      })
+      .filter((item): item is { name: string; dose: string; duration: string } => Boolean(item));
+  }
+
+  const asText = toStringSafe(value).trim();
+  if (!asText) return [];
+  return [{ name: asText, dose: "", duration: "" }];
+}
+
+function parseJsonLoose(text: string): unknown {
+  const raw = text.trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // continue
+  }
+
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {
+      // continue
+    }
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const candidate = raw.slice(start, end + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // continue
+    }
+  }
+
+  throw new Error("Model did not return parseable JSON");
+}
+
+function coerceSoapPayload(
+  rawInput: unknown,
+  fallbackMode: "in_room" | "dictation",
+) {
+  const raw = toRecord(rawInput);
+  const header = toRecord(parseMaybeJson(raw.header));
+  const subjective = toRecord(parseMaybeJson(raw.subjective));
+  const assessmentRaw = parseMaybeJson(raw.assessment);
+  const assessment = toRecord(assessmentRaw);
+  const planRaw = parseMaybeJson(raw.plan);
+  const plan = toRecord(planRaw);
+
+  // Legacy shape support: patient_info / consultation_info / soap_note are JSON strings.
+  const patientInfo = toRecord(parseMaybeJson(raw.patient_info));
+  const consultationInfo = toRecord(parseMaybeJson(raw.consultation_info));
+  const soapNote = toRecord(parseMaybeJson(raw.soap_note));
+  const soapSubjective = toRecord(parseMaybeJson(soapNote.subjective));
+  const soapObjective = toRecord(parseMaybeJson(soapNote.objective));
+  const soapAssessment = toRecord(parseMaybeJson(soapNote.assessment));
+  const soapPlan = toRecord(parseMaybeJson(soapNote.plan));
+
+  const normalizedMode = raw.mode === "in_room" || raw.mode === "dictation" ? raw.mode : fallbackMode;
+  const normalizedLanguage = toStringSafe(raw.language).toLowerCase().startsWith("vi") ? "vi" : "vi";
+  const assessmentText = toStringSafe(assessmentRaw).trim() || toStringSafe(soapNote.assessment).trim();
+  const planText = toStringSafe(planRaw).trim() || toStringSafe(soapNote.plan).trim();
+
+  const legacyChiefComplaint = toStringSafe(soapSubjective.chief_complaint);
+  const legacyHpi = toStringSafe(soapSubjective.history_of_present_illness);
+  const fallbackTranscript = [legacyChiefComplaint, legacyHpi].filter(Boolean).join(". ");
+  const objectiveChunks = [
+    toStringSafe(soapObjective.vitals),
+    toStringSafe(soapObjective.labs),
+    toStringSafe(soapObjective.imaging),
+    toStringSafe(soapObjective.physical_exam),
+  ].filter(Boolean);
+
+  return {
+    mode: normalizedMode,
+    language: normalizedLanguage,
+    transcript: toStringSafe(raw.transcript, fallbackTranscript || "Chưa rõ transcript").trim(),
+    header: {
+      encounter_id: toStringSafe(header.encounter_id),
+      datetime: toStringSafe(header.datetime),
+      department: toStringSafe(header.department),
+      doctor: toStringSafe(header.doctor),
+      patient_identifier: toStringSafe(header.patient_identifier) || toStringSafe(patientInfo.patient_id),
+      sex: toStringSafe(header.sex) || toStringSafe(patientInfo.gender),
+      patient_info: toStringSafe(header.patient_info),
+      patient_name: toStringSafe(header.patient_name) || toStringSafe(patientInfo.full_name),
+      dob: toStringSafe(header.dob) || toStringSafe(patientInfo.date_of_birth),
+      age: toStringSafe(header.age) || toStringSafe(patientInfo.age),
+      exam_started_at: toStringSafe(header.exam_started_at) || toStringSafe(consultationInfo.consultation_start_time),
+      exam_ended_at: toStringSafe(header.exam_ended_at) || toStringSafe(consultationInfo.consultation_end_time),
+    },
+    subjective: {
+      chief_complaint: toStringSafe(subjective.chief_complaint) || legacyChiefComplaint,
+      hpi_summary: toStringSafe(subjective.hpi_summary) || legacyHpi,
+      onset: toStringSafe(subjective.onset),
+      progression: toStringSafe(subjective.progression),
+      aggravating_alleviating_factors: toStringSafe(subjective.aggravating_alleviating_factors),
+      allergies: toStringSafe(subjective.allergies) || toStringSafe(soapSubjective.allergies),
+      current_meds: toStringSafe(subjective.current_meds) || toStringSafe(soapSubjective.medications),
+      relevant_pmh: toStringSafe(subjective.relevant_pmh) || toStringSafe(soapSubjective.past_medical_history),
+    },
+    assessment: {
+      primary_diagnosis:
+        toStringSafe(assessment.primary_diagnosis) || toStringSafe(soapAssessment.diagnosis) || assessmentText,
+      differential_diagnosis:
+        toStringSafe(assessment.differential_diagnosis) || toStringSafe(soapAssessment.differential_diagnosis),
+      risk_level: toStringSafe(assessment.risk_level) || toStringSafe(soapAssessment.summary),
+    },
+    plan: {
+      labs_imaging: toStringSafe(plan.labs_imaging) || objectiveChunks.join(" | "),
+      medications: coerceMedications(plan.medications ?? soapPlan.medications),
+      instructions: toStringSafe(plan.instructions) || toStringSafe(soapPlan.treatment) || planText,
+      follow_up: toStringSafe(plan.follow_up) || toStringSafe(soapPlan.follow_up),
+      red_flags: toStringSafe(plan.red_flags),
+    },
+    note_text: toStringSafe(raw.note_text) || toStringSafe(raw.soap_note),
+    missing_info_flags: toFlagArray(raw.missing_info_flags),
+    uncertainty_flags: toStringArray(raw.uncertainty_flags),
+    disclaimer: toStringSafe(
+      raw.disclaimer,
+      "AI chỉ soạn nháp; bác sĩ cần xác nhận nội dung trước khi lưu chính thức.",
+    ),
+  };
+}
+
 function createMockSoap(mode: "in_room" | "dictation", file?: Express.Multer.File) {
   const now = new Date().toLocaleString("vi-VN");
   const fileInfo = file ? `${file.originalname} (${Math.round(file.size / 1024)}KB)` : "audio chưa rõ";
@@ -298,11 +484,25 @@ ${mode === "dictation" ? "- Giả định bác sĩ đang đọc theo cấu trúc
       throw new Error("Empty response from Gemini");
     }
 
-    // Parse and validate the JSON response using Zod
     let parsedData;
+    const normalizedMode = mode as "in_room" | "dictation";
     try {
-      const rawJson = JSON.parse(responseText);
-      parsedData = soapSchema.parse(rawJson);
+      const rawJson = parseJsonLoose(responseText);
+      const strictParsed = soapSchema.safeParse(rawJson);
+      if (strictParsed.success) {
+        parsedData = strictParsed.data;
+      } else {
+        const coerced = coerceSoapPayload(rawJson, normalizedMode);
+        const coercedParsed = soapSchema.safeParse(coerced);
+        if (!coercedParsed.success) {
+          console.error("Coerced payload validation failed:", coercedParsed.error);
+          return res.status(500).json({
+            error: "AI response format invalid after normalization.",
+            details: coercedParsed.error.message,
+          });
+        }
+        parsedData = coercedParsed.data;
+      }
     } catch (parseError) {
       console.error("JSON Parse or Validation Error:", parseError);
       console.error("Raw Response:", responseText);
