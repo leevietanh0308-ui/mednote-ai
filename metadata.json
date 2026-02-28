@@ -1,0 +1,5 @@
+{
+  "name": "MedNote-SOAP",
+  "description": "AI-powered clinical SOAP note generator from audio recordings.",
+  "requestFramePermissions": ["microphone"]
+}
