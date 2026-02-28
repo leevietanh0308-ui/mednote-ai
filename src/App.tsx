@@ -2113,6 +2113,21 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     return true;
   };
 
+  const buildLocalSoapFromTranscript = (transcriptRaw: string): SoapData => {
+    const base: SoapData = {
+      ...emptySoap,
+      mode,
+      transcript: transcriptRaw,
+      header: {
+        ...emptySoap.header,
+        exam_started_at: recordingStartedAt ? recordingStartedAt.toLocaleString('vi-VN') : '',
+        exam_ended_at: recordingEndedAt ? recordingEndedAt.toLocaleString('vi-VN') : '',
+      },
+    };
+    const hydrated = hydrateSoapFromTranscript(base, transcriptRaw, { overwriteExisting: true });
+    return enrichSoapData(hydrated);
+  };
+
   const stopDemoVoice = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
@@ -3086,9 +3101,31 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     formData.append('audio', targetFile);
     formData.append('mode', mode);
     formData.append('recordingAudience', recordingAudience);
-    if (transcriptHint) formData.append('transcriptHint', transcriptHint);
+    formData.append('transcriptHint', transcriptHint);
     if (recordingStartedAt) formData.append('examStartedAt', asIsoString(recordingStartedAt));
     if (recordingEndedAt) formData.append('examEndedAt', asIsoString(recordingEndedAt));
+
+    console.info('[process-audio] request payload', {
+      audioName: targetFile.name,
+      audioSize: targetFile.size,
+      mode,
+      recordingAudience,
+      transcriptHintLength: transcriptHint.length,
+    });
+
+    if (targetFile.size === 0 && transcriptHint) {
+      const localDraft = buildLocalSoapFromTranscript(transcriptHint);
+      localDraft.uncertainty_flags = [
+        ...localDraft.uncertainty_flags,
+        'File audio rỗng; hệ thống đã parse trực tiếp từ live transcript.',
+      ];
+      setResult(localDraft);
+      setFormSoap(localDraft);
+      setTemplateExampleNotice(false);
+      addToHistory(localDraft, 'generated');
+      setLoading(false);
+      return;
+    }
 
     try {
       const response = await fetch('/api/process-audio', {
@@ -3115,7 +3152,20 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       setTemplateExampleNotice(false);
       addToHistory(enriched, 'generated');
     } catch (err: any) {
-      setError(err.message || 'Đã xảy ra lỗi không xác định.');
+      if (transcriptHint) {
+        const localDraft = buildLocalSoapFromTranscript(transcriptHint);
+        localDraft.uncertainty_flags = [
+          ...localDraft.uncertainty_flags,
+          'API xử lý audio lỗi; hệ thống đã fallback parse từ live transcript.',
+        ];
+        setResult(localDraft);
+        setFormSoap(localDraft);
+        setTemplateExampleNotice(false);
+        addToHistory(localDraft, 'generated');
+        setError(`API process-audio lỗi (${err.message || 'unknown'}), đã fallback parse từ transcript.`);
+      } else {
+        setError(err.message || 'Đã xảy ra lỗi không xác định.');
+      }
     } finally {
       setLoading(false);
     }
