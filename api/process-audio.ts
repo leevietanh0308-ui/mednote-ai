@@ -49,9 +49,9 @@ const soapSchema = z.object({
   subjective: z.object({
     chief_complaint: z.string().describe("Lý do khám (CC)"),
     hpi_summary: z.string().describe("Bệnh sử hiện tại (HPI) tóm tắt 2-4 câu"),
-    onset: z.string().describe("Khởi phát"),
-    progression: z.string().describe("Diễn tiến"),
-    aggravating_alleviating_factors: z.string().describe("Yếu tố tăng/giảm"),
+    onset: z.string().default("").describe("Khởi phát (không bắt buộc)"),
+    progression: z.string().default("").describe("Diễn tiến (không bắt buộc)"),
+    aggravating_alleviating_factors: z.string().default("").describe("Yếu tố tăng/giảm (không bắt buộc)"),
     allergies: z.string().describe("Dị ứng (Allergy): Có/Không/Chưa rõ (ghi cụ thể nếu có)"),
     current_meds: z.string().describe("Thuốc đang dùng: Có/Không/Chưa rõ (ghi tên nếu có)"),
     relevant_pmh: z.string().describe("Tiền sử liên quan (có thể 1 câu)"),

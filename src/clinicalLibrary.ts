@@ -55,7 +55,7 @@ export const mandatoryVoiceQuestions: MandatoryVoiceQuestion[] = [
   { id: 'q1', text: 'Họ tên - Năm sinh - Giới tính' },
   { id: 'q2', text: 'CCCD hoặc Mã bệnh nhân' },
   { id: 'q3', text: 'Lý do khám chính (1 câu ngắn)' },
-  { id: 'q4', text: 'Khởi phát khi nào + diễn tiến ra sao' },
+  { id: 'q4', text: 'Mô tả triệu chứng hiện tại (ngắn gọn)' },
   { id: 'q5', text: 'Mức độ hiện tại + triệu chứng kèm' },
   { id: 'q6', text: 'Tiền sử bệnh nền quan trọng' },
   { id: 'q7', text: 'Dị ứng + Thuốc đang dùng/đã dùng gần đây' },
@@ -67,8 +67,7 @@ export const universalHpiChecklist: string[] = [
   'Thời gian: liên tục hay từng cơn?',
   'Tính chất: nhói, âm ỉ, bỏng rát, đè nặng...',
   'Mức độ: thang điểm 0-10 hoặc nhẹ/vừa/nặng',
-  'Diễn tiến: tăng dần, giảm dần hay dao động?',
-  'Yếu tố tăng/giảm: gắng sức, tư thế, ăn uống, thuốc',
+  'Triệu chứng hiện tại có gây ảnh hưởng sinh hoạt không?',
   'Triệu chứng kèm: sốt, khó thở, nôn, tiêu chảy...',
   'Tác động chức năng: ăn ngủ, đi lại, làm việc',
   'Đã dùng thuốc gì trước đó? liều và lần dùng cuối',
@@ -417,4 +416,3 @@ export const redFlagRules: RedFlagRule[] = [
     recommendation: 'Cần khám trong ngày, kiểm tra sinh hiệu và nguyên nhân.',
   },
 ];
-
