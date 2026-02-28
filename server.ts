@@ -188,6 +188,64 @@ function parseJsonLoose(text: string): unknown {
   throw new Error("Model did not return parseable JSON");
 }
 
+const SOAP_ROOT_KEYS = [
+  "mode",
+  "language",
+  "transcript",
+  "header",
+  "subjective",
+  "assessment",
+  "plan",
+  "note_text",
+];
+
+function looksLikeSoapPayload(value: unknown): boolean {
+  const record = toRecord(value);
+  return SOAP_ROOT_KEYS.some((key) => key in record);
+}
+
+function unwrapGeminiPayload(rawInput: unknown): unknown {
+  let current = parseMaybeJson(rawInput);
+
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (looksLikeSoapPayload(current)) return current;
+
+    if (Array.isArray(current)) {
+      if (current.length === 1) {
+        current = parseMaybeJson(current[0]);
+        continue;
+      }
+      return current;
+    }
+
+    const record = toRecord(current);
+    const wrapper =
+      record.data ??
+      record.json ??
+      record.output ??
+      record.result ??
+      record.response ??
+      record.payload ??
+      record.content;
+    if (wrapper === undefined) return current;
+
+    const next = parseMaybeJson(wrapper);
+    if (next === current) return current;
+    current = next;
+  }
+
+  return current;
+}
+
+async function extractGeminiText(response: unknown): Promise<string> {
+  const textField = (response as { text?: unknown })?.text;
+  if (typeof textField === "function") {
+    const resolved = await (textField as () => Promise<unknown> | unknown).call(response);
+    return toStringSafe(resolved).trim();
+  }
+  return toStringSafe(textField).trim();
+}
+
 function inferOnsetFromText(...inputs: unknown[]): string {
   const text = inputs
     .map((value) => toStringSafe(value).trim())
@@ -516,37 +574,45 @@ ${mode === "dictation" ? "- Giả định bác sĩ đang đọc theo cấu trúc
       }
     });
 
-    const responseText = response.text;
+    const responseText = await extractGeminiText(response);
     if (!responseText) {
       throw new Error("Empty response from Gemini");
     }
 
-    let parsedData;
     const normalizedMode = mode as "in_room" | "dictation";
+    let rawCandidate: unknown = {};
     try {
-      const rawJson = parseJsonLoose(responseText);
-      const strictParsed = soapSchema.safeParse(rawJson);
-      if (strictParsed.success) {
-        parsedData = strictParsed.data;
-      } else {
-        const coerced = coerceSoapPayload(rawJson, normalizedMode);
-        const coercedParsed = soapSchema.safeParse(coerced);
-        if (!coercedParsed.success) {
-          console.error("Coerced payload validation failed:", coercedParsed.error);
-          return res.status(500).json({
-            error: "AI response format invalid after normalization.",
-            details: coercedParsed.error.message,
-          });
-        }
-        parsedData = coercedParsed.data;
-      }
+      rawCandidate = unwrapGeminiPayload(parseJsonLoose(responseText));
     } catch (parseError) {
-      console.error("JSON Parse or Validation Error:", parseError);
+      console.error("Unable to parse JSON response from Gemini, fallback coercion will be used.", parseError);
       console.error("Raw Response:", responseText);
-      return res.status(500).json({ 
-        error: "Failed to parse or validate Gemini response. Please try again.",
-        details: parseError instanceof Error ? parseError.message : String(parseError)
-      });
+    }
+
+    let parsedData: z.infer<typeof soapSchema>;
+    const strictParsed = soapSchema.safeParse(rawCandidate);
+    if (strictParsed.success) {
+      parsedData = strictParsed.data;
+    } else {
+      const coerced = coerceSoapPayload(rawCandidate, normalizedMode);
+      const coercedParsed = soapSchema.safeParse(coerced);
+      if (coercedParsed.success) {
+        parsedData = coercedParsed.data;
+      } else {
+        console.error("Coerced payload validation failed, returning minimum-safe draft:", coercedParsed.error);
+        const emergencyDraft = coerceSoapPayload({}, normalizedMode);
+        const rawRecord = toRecord(rawCandidate);
+        const transcriptFallback = toStringSafe(rawRecord.transcript, responseText).trim();
+        emergencyDraft.transcript = transcriptFallback || "Chưa rõ transcript";
+        emergencyDraft.missing_info_flags = [
+          ...emergencyDraft.missing_info_flags,
+          "AI trả về định dạng không đúng schema; hệ thống đã tạo bản nháp tối thiểu.",
+        ];
+        emergencyDraft.uncertainty_flags = [
+          ...emergencyDraft.uncertainty_flags,
+          "Cần bác sĩ kiểm tra lại toàn bộ nội dung trước khi lưu.",
+        ];
+        parsedData = soapSchema.parse(emergencyDraft);
+      }
     }
 
     const normalized = normalizeSoapData(parsedData, examStartedAt, examEndedAt);
