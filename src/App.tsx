@@ -3296,17 +3296,20 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
         </div>
       )}
 
+      <div className="pointer-events-none fixed bottom-4 right-4 z-40 max-w-[min(92vw,460px)]">
+        <div className="flex items-center gap-3 rounded-2xl border border-red-300 bg-red-50/95 px-3 py-2 shadow-lg backdrop-blur-sm">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white shadow">
+            <TriangleAlert className="h-5 w-5" />
+          </span>
+          <p className="text-xs font-semibold leading-snug text-red-700 sm:text-sm">
+            ( app chủ yếu ghi chú thông tin còn chẩn đoán các thứ thì để bác sĩ )
+          </p>
+        </div>
+      </div>
+
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-[1880px] mx-auto px-4 md:px-6 xl:px-8 py-3 flex items-center justify-between gap-4">
-          <div className="relative flex items-center gap-2 text-indigo-600 min-w-[230px]">
-            <div className="pointer-events-none absolute -left-7 -top-2 z-20">
-              <span className="inline-flex items-center rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white shadow">
-                Báo đỏ
-              </span>
-              <span className="absolute left-0 top-full mt-1 inline-block origin-top-left -rotate-90 whitespace-nowrap rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold text-white shadow">
-                app chủ yếu ghi chú thông tin còn chẩn đoán các thứ thì để bác sĩ
-              </span>
-            </div>
+          <div className="flex items-center gap-2 text-indigo-600 min-w-[230px]">
             <FileAudio className="w-6 h-6" />
             <h1 className="text-xl font-semibold tracking-tight">MedNote-SOAP <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full ml-2 align-middle">Demo</span></h1>
           </div>
