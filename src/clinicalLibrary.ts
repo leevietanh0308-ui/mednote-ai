@@ -51,6 +51,18 @@ export interface RedFlagRule {
   recommendation: string;
 }
 
+export interface SyndromeModule {
+  id: string;
+  label: string;
+  systemTags: SystemTag[];
+  chiefComplaintIds: string[];
+  keywords: string[];
+  requiredChecks: string[];
+  commonDiagnoses: string[];
+  notToMissDiagnoses: string[];
+  emergencyRedFlags: string[];
+}
+
 export const mandatoryVoiceQuestions: MandatoryVoiceQuestion[] = [
   { id: 'q1', text: 'Họ tên - Năm sinh - Giới tính' },
   { id: 'q2', text: 'CCCD hoặc Mã bệnh nhân' },
@@ -342,21 +354,37 @@ export const redFlagRules: RedFlagRule[] = [
     id: 'respiratory_severe',
     label: 'Khó thở nặng/tím tái',
     level: 'emergency',
-    triggers: ['khó thở nặng', 'tím tái', 'không thở', 'nói không thành câu'],
+    triggers: ['khó thở nặng', 'tím tái', 'không thở', 'nói không thành câu', 'thở rít', 'co kéo cơ hô hấp phụ'],
     recommendation: 'Cần chuyển cấp cứu ngay.',
   },
   {
     id: 'chest_pain_high_risk',
     label: 'Đau ngực nguy cơ cao',
     level: 'emergency',
-    triggers: ['đau ngực bóp nghẹt', 'đau ngực lan tay trái', 'đau ngực kèm vã mồ hôi', 'đau ngực kèm ngất'],
+    triggers: [
+      'đau ngực bóp nghẹt',
+      'đau ngực lan tay trái',
+      'đau ngực kèm vã mồ hôi',
+      'đau ngực kèm ngất',
+      'đau ngực hơn 15 phút',
+      'đau ngực kéo dài 15 phút',
+      'đau ngực kèm khó thở',
+      'đau ngực kèm nôn',
+    ],
     recommendation: 'Ưu tiên cấp cứu tim mạch.',
+  },
+  {
+    id: 'shock_syncope',
+    label: 'Tụt huyết áp/ngất',
+    level: 'emergency',
+    triggers: ['tụt huyết áp', 'huyết áp thấp', 'ngất', 'choáng nặng', 'lạnh đầu chi'],
+    recommendation: 'Cần xử trí cấp cứu theo ABC.',
   },
   {
     id: 'neuro_focal_deficit',
     label: 'Thiếu sót thần kinh khu trú',
     level: 'emergency',
-    triggers: ['yếu liệt', 'nói khó', 'méo miệng', 'co giật', 'lơ mơ'],
+    triggers: ['yếu liệt', 'nói khó', 'méo miệng', 'co giật', 'lơ mơ', 'FAST dương tính', 'mất thăng bằng đột ngột'],
     recommendation: 'Cần đánh giá thần kinh cấp cứu.',
   },
   {
@@ -384,8 +412,21 @@ export const redFlagRules: RedFlagRule[] = [
     id: 'allergy_anaphylaxis',
     label: 'Phản vệ/dị ứng nặng',
     level: 'emergency',
-    triggers: ['phù môi lưỡi', 'khó thở sau ăn', 'mề đay kèm tụt huyết áp', 'choáng phản vệ'],
+    triggers: [
+      'phù môi lưỡi',
+      'khó thở sau ăn',
+      'mề đay kèm tụt huyết áp',
+      'choáng phản vệ',
+      'khò khè sau tiếp xúc dị nguyên',
+    ],
     recommendation: 'Xử trí phản vệ khẩn cấp.',
+  },
+  {
+    id: 'sepsis_signs',
+    label: 'Nhiễm trùng nặng/Sepsis',
+    level: 'emergency',
+    triggers: ['ban xuất huyết', 'ban không mất màu', 'da loang lổ', 'da xám', 'tím tái', 'lơ mơ kèm sốt'],
+    recommendation: 'Ưu tiên xử trí sepsis và chuyển cấp cứu.',
   },
   {
     id: 'urinary_sepsis',
@@ -414,5 +455,176 @@ export const redFlagRules: RedFlagRule[] = [
     level: 'urgent_same_day',
     triggers: ['choáng nhiều', 'chóng mặt nhiều', 'suýt ngất', 'xỉu'],
     recommendation: 'Cần khám trong ngày, kiểm tra sinh hiệu và nguyên nhân.',
+  },
+];
+
+export const syndromeModules: SyndromeModule[] = [
+  {
+    id: 'chest_pain',
+    label: 'Đau ngực / Tức ngực',
+    systemTags: ['cardio', 'respiratory'],
+    chiefComplaintIds: ['chest_pain_resp', 'palpitation', 'syncope'],
+    keywords: ['đau ngực', 'tức ngực', 'nặng ngực'],
+    requiredChecks: [
+      'Đau kéo dài >15 phút hay không',
+      'Có liên quan gắng sức không',
+      'Có lan tay trái/hàm/lưng không',
+      'Có vã mồ hôi, nôn, khó thở, ngất không',
+    ],
+    commonDiagnoses: ['Đau cơ thành ngực', 'Trào ngược/viêm thực quản', 'Cơn lo âu/panic'],
+    notToMissDiagnoses: ['Hội chứng mạch vành cấp (ACS)', 'Thuyên tắc phổi', 'Bóc tách động mạch chủ', 'Tràn khí màng phổi'],
+    emergencyRedFlags: ['Đau >15 phút + khó thở/nôn/vã mồ hôi/ngất/tụt huyết áp'],
+  },
+  {
+    id: 'dyspnea_cough',
+    label: 'Khó thở / Khò khè / Ho nhiều',
+    systemTags: ['respiratory'],
+    chiefComplaintIds: ['dyspnea', 'wheezing', 'cough', 'hemoptysis'],
+    keywords: ['khó thở', 'khò khè', 'ho nhiều'],
+    requiredChecks: [
+      'Nói được câu dài hay không',
+      'SpO2 hiện tại',
+      'Có sốt, đau ngực, đờm không',
+      'Tiền sử hen/COPD',
+    ],
+    commonDiagnoses: ['Cảm cúm/viêm hô hấp trên', 'Viêm phế quản', 'Hen nhẹ do kích thích'],
+    notToMissDiagnoses: ['Cơn hen nặng', 'Viêm phổi nặng', 'Phù phổi cấp', 'Thuyên tắc phổi'],
+    emergencyRedFlags: ['Nói không thành câu', 'Tím tái', 'SpO2 giảm', 'Lơ mơ'],
+  },
+  {
+    id: 'fever_module',
+    label: 'Sốt',
+    systemTags: ['general', 'respiratory', 'urinary', 'gastro'],
+    chiefComplaintIds: ['fever', 'rash_fever'],
+    keywords: ['sốt', 'rét run', 'nhiệt độ'],
+    requiredChecks: [
+      'Nhiệt độ cao nhất và thời gian sốt',
+      'Rét run/phát ban/đau đầu/khó thở/tiểu buốt/tiêu chảy',
+      'Yếu tố dịch tễ/tiếp xúc',
+    ],
+    commonDiagnoses: ['Nhiễm virus hô hấp', 'Cúm', 'Viêm họng/viêm xoang', 'Nhiễm trùng tiểu'],
+    notToMissDiagnoses: ['Sepsis', 'Viêm màng não/viêm não', 'Sốt xuất huyết'],
+    emergencyRedFlags: ['Ban xuất huyết', 'Tím tái', 'Lơ mơ', 'Khó thở', 'Tụt huyết áp'],
+  },
+  {
+    id: 'headache_module',
+    label: 'Đau đầu',
+    systemTags: ['neuro'],
+    chiefComplaintIds: ['headache', 'dizziness', 'numb_weakness'],
+    keywords: ['đau đầu', 'nhức đầu', 'đau đầu dữ dội'],
+    requiredChecks: [
+      'Khởi phát đột ngột hay từ từ',
+      'Có phải đau đầu tệ nhất đời không',
+      'Có sốt/cứng cổ/yếu liệt/nói khó/chấn thương đầu không',
+    ],
+    commonDiagnoses: ['Đau đầu căng thẳng', 'Migraine', 'Viêm xoang'],
+    notToMissDiagnoses: ['Xuất huyết não/SAH', 'Viêm màng não', 'Tăng huyết áp cấp cứu'],
+    emergencyRedFlags: ['FAST', 'Lơ mơ/co giật', 'Cứng cổ + sốt', 'Đau đầu sét đánh'],
+  },
+  {
+    id: 'dizziness_syncope_module',
+    label: 'Chóng mặt / Choáng / Ngất',
+    systemTags: ['neuro', 'cardio', 'general'],
+    chiefComplaintIds: ['dizziness', 'syncope', 'palpitation'],
+    keywords: ['chóng mặt', 'choáng', 'ngất', 'xỉu'],
+    requiredChecks: [
+      'Chóng mặt xoay tròn hay choáng',
+      'Có ngất thật không',
+      'Kèm đau ngực/khó thở',
+      'Có tê yếu/nói khó',
+    ],
+    commonDiagnoses: ['Hạ huyết áp tư thế', 'BPPV', 'Mất nước nhẹ'],
+    notToMissDiagnoses: ['Rối loạn nhịp tim', 'Nhồi máu cơ tim', 'Đột quỵ thân não/tiểu não', 'Xuất huyết tiêu hóa'],
+    emergencyRedFlags: ['Ngất kèm đau ngực/khó thở', 'FAST dương tính'],
+  },
+  {
+    id: 'abdominal_pain_module',
+    label: 'Đau bụng',
+    systemTags: ['gastro', 'urinary'],
+    chiefComplaintIds: ['abdominal_pain', 'pelvic_pain', 'nausea_vomit'],
+    keywords: ['đau bụng', 'đau hố chậu phải', 'đau thượng vị'],
+    requiredChecks: [
+      'Vị trí đau và hướng lan',
+      'Nôn/tiêu chảy/sốt/tiểu buốt',
+      'Nữ: trễ kinh/ra huyết',
+    ],
+    commonDiagnoses: ['Viêm dạ dày/GERD', 'Ngộ độc thức ăn/viêm dạ dày ruột', 'Táo bón'],
+    notToMissDiagnoses: ['Viêm ruột thừa', 'Thai ngoài tử cung', 'Viêm tụy cấp', 'Tắc ruột', 'Thủng tạng rỗng'],
+    emergencyRedFlags: ['Đau tăng nhanh dữ dội', 'Bụng cứng', 'Nôn liên tục', 'Choáng/ngất'],
+  },
+  {
+    id: 'vomit_diarrhea_module',
+    label: 'Nôn / Tiêu chảy',
+    systemTags: ['gastro', 'general'],
+    chiefComplaintIds: ['nausea_vomit', 'diarrhea'],
+    keywords: ['nôn', 'ói', 'tiêu chảy'],
+    requiredChecks: [
+      'Số lần nôn/tiêu chảy',
+      'Dấu mất nước: khát nhiều, tiểu ít',
+      'Có máu trong phân hay sốt cao không',
+    ],
+    commonDiagnoses: ['Viêm dạ dày ruột do virus', 'Ngộ độc thức ăn'],
+    notToMissDiagnoses: ['Mất nước nặng/sepsis', 'Tắc ruột'],
+    emergencyRedFlags: ['Phân đen/ra máu', 'Lơ mơ', 'Dấu mất nước nặng'],
+  },
+  {
+    id: 'dyspepsia_module',
+    label: 'Ợ chua / Đau thượng vị / Khó tiêu',
+    systemTags: ['gastro'],
+    chiefComplaintIds: ['reflux', 'abdominal_pain'],
+    keywords: ['ợ chua', 'đau thượng vị', 'khó tiêu'],
+    requiredChecks: [
+      'Đau liên quan bữa ăn hay tư thế',
+      'Có nuốt nghẹn/sụt cân/nôn dai dẳng không',
+      'Có thiếu máu/ra máu tiêu hóa không',
+    ],
+    commonDiagnoses: ['GERD/viêm dạ dày', 'Loét dạ dày tá tràng'],
+    notToMissDiagnoses: ['Ung thư dạ dày-thực quản', 'Xuất huyết tiêu hóa'],
+    emergencyRedFlags: ['Nôn máu', 'Phân đen', 'Sụt cân nhanh', 'Nuốt nghẹn tiến triển'],
+  },
+  {
+    id: 'urinary_module',
+    label: 'Tiểu buốt / Tiểu rắt / Tiểu máu / Đau hông lưng',
+    systemTags: ['urinary'],
+    chiefComplaintIds: ['dysuria', 'hematuria', 'flank_pain'],
+    keywords: ['tiểu buốt', 'tiểu rắt', 'tiểu máu', 'đau hông lưng'],
+    requiredChecks: [
+      'Có sốt rét run không',
+      'Đau hông lưng có lan bẹn không',
+      'Có thai hay không',
+    ],
+    commonDiagnoses: ['Viêm bàng quang (UTI)', 'Sỏi niệu quản'],
+    notToMissDiagnoses: ['Viêm thận-bể thận', 'Nhiễm trùng huyết nguồn niệu'],
+    emergencyRedFlags: ['Sốt cao rét run + đau hông lưng', 'Tụt huyết áp'],
+  },
+  {
+    id: 'joint_module',
+    label: 'Đau khớp / Sưng nóng đỏ',
+    systemTags: ['musculoskeletal'],
+    chiefComplaintIds: ['joint_pain', 'swollen_joint'],
+    keywords: ['đau khớp', 'sưng nóng đỏ'],
+    requiredChecks: [
+      'Một khớp hay nhiều khớp',
+      'Khởi phát qua đêm hay kéo dài',
+      'Có sốt/vết thương/tiền sử gút không',
+    ],
+    commonDiagnoses: ['Cơn gút cấp', 'Thoái hóa khớp', 'Viêm gân'],
+    notToMissDiagnoses: ['Viêm khớp nhiễm trùng'],
+    emergencyRedFlags: ['Sốt + khớp sưng nóng đỏ', 'Đau không chịu được'],
+  },
+  {
+    id: 'allergy_rash_module',
+    label: 'Phát ban / Mề đay / Phù mặt',
+    systemTags: ['dermatology', 'respiratory'],
+    chiefComplaintIds: ['urticaria', 'rash', 'skin_infection'],
+    keywords: ['mề đay', 'phát ban', 'phù mặt', 'dị ứng'],
+    requiredChecks: [
+      'Có khó thở/khò khè không',
+      'Có phù môi lưỡi không',
+      'Có thuốc/đồ ăn mới không',
+    ],
+    commonDiagnoses: ['Mề đay dị ứng nhẹ', 'Viêm da tiếp xúc'],
+    notToMissDiagnoses: ['Phản vệ', 'Stevens-Johnson/TEN'],
+    emergencyRedFlags: ['Phù môi-lưỡi + khó thở/khò khè/choáng'],
   },
 ];

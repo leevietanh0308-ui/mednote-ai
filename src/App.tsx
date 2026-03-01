@@ -29,8 +29,10 @@ import {
   mandatoryVoiceQuestions,
   pmhChecklist,
   redFlagRules,
+  syndromeModules,
   universalHpiChecklist,
   type ChiefComplaintItem,
+  type SyndromeModule,
   type SystemTag,
 } from './clinicalLibrary';
 import creatorPhoto from './assets/creator-photo.jpg';
@@ -1416,6 +1418,42 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     };
   };
 
+  const matchSyndromeModulesFromContext = (
+    context: ClinicalContext,
+    symptoms: string[],
+    transcript: string,
+  ): SyndromeModule[] => {
+    const normalizedText = toAsciiLower(`${transcript} ${symptoms.join(' ')}`).replace(/\s+/g, ' ').trim();
+    const complaintIds = new Set(context.matchedComplaints.map((item) => item.id));
+
+    const matched = syndromeModules.filter((module) => {
+      const complaintHit = module.chiefComplaintIds.some((id) => complaintIds.has(id));
+      const keywordHit = module.keywords.some((keyword) => containsClinicalTerm(normalizedText, keyword));
+      const systemHit = module.systemTags.some((tag) => context.matchedSystems.includes(tag));
+      return complaintHit || keywordHit || systemHit;
+    });
+
+    if (matched.length > 0) return matched;
+    if (context.matchedSystems.length === 0) return [];
+    return syndromeModules.filter((module) => module.systemTags.includes(context.matchedSystems[0]));
+  };
+
+  const collectLibraryDiagnosisTerms = (modules: SyndromeModule[]): string[] =>
+    uniqueValues(modules.flatMap((module) => [...module.commonDiagnoses, ...module.notToMissDiagnoses]));
+
+  const isDiagnosisOutsideLibrary = (draft: SoapData, modules: SyndromeModule[]): boolean => {
+    const diagnosisRaw = normalizeCapturedValue(
+      `${draft.assessment.primary_diagnosis || ''}. ${draft.assessment.differential_diagnosis || ''}`,
+    );
+    if (!diagnosisRaw) return false;
+
+    const normalizedDiagnosis = toAsciiLower(diagnosisRaw).replace(/\s+/g, ' ').trim();
+    const referenceTerms = collectLibraryDiagnosisTerms(modules.length > 0 ? modules : syndromeModules);
+    if (referenceTerms.length === 0) return false;
+
+    return !referenceTerms.some((term) => containsClinicalTerm(normalizedDiagnosis, term));
+  };
+
   const inferSystemsFromSymptoms = (symptoms: string[]): SystemTag[] => {
     const inferred = new Set<SystemTag>();
     for (const symptom of symptoms) {
@@ -1600,10 +1638,27 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     symptoms: string[],
     triage: TriageInsight,
     gate: InferenceGate,
+    matchedModules: SyndromeModule[],
   ) => {
     if (!gate.readyForDifferential) {
       const topMissing = gate.missingForDifferential.slice(0, 2).join(' ');
       return `Chưa đủ dữ kiện để nhận định sâu (insufficient_data). ${topMissing}`;
+    }
+    if (matchedModules.length > 0) {
+      const topModule = matchedModules[0];
+      const commonTop = topModule.commonDiagnoses.slice(0, 2).join('; ');
+      const notToMissTop = topModule.notToMissDiagnoses.slice(0, 2).join('; ');
+      const urgencyNote =
+        triage.level === 'emergency'
+          ? 'Ca này có dấu hiệu nguy cơ cao, ưu tiên xử trí khẩn trước.'
+          : triage.level === 'urgent_same_day'
+            ? 'Cần khám trực tiếp sớm trong ngày/24 giờ.'
+            : 'Theo dõi ngoại trú và đối chiếu khám lâm sàng.';
+      const redFlagIntro =
+        triage.level === 'emergency' && triage.redFlags.length > 0
+          ? `RED FLAGS: ${triage.redFlags.slice(0, 3).join('; ')}. `
+          : '';
+      return `${redFlagIntro}Định hướng theo module ${topModule.label}: Thường gặp ${commonTop || 'Chưa rõ'}. Không được bỏ sót ${notToMissTop || 'Chưa rõ'}. ${urgencyNote} Bác sĩ xác nhận chẩn đoán cuối cùng.`;
     }
     if (!symptoms.length && !triage.matchedSystems.length) {
       return 'Nhận định sơ bộ: Đã đủ checklist tối thiểu nhưng triệu chứng còn mô tả chung, cần bác sĩ xác nhận chẩn đoán cuối cùng.';
@@ -1632,11 +1687,26 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     symptoms: string[],
     triage: TriageInsight,
     gate: InferenceGate,
+    matchedModules: SyndromeModule[],
   ) => {
     if (!gate.readyForDifferential) {
       return `Chưa đủ dữ kiện để lập chẩn đoán phân biệt (insufficient_data). ${gate.missingForDifferential
         .slice(0, 3)
         .join(' ')}`;
+    }
+
+    if (matchedModules.length > 0) {
+      const requiredChecks = uniqueValues(matchedModules.flatMap((module) => module.requiredChecks)).slice(0, 6);
+      const commonDiagnoses = uniqueValues(matchedModules.flatMap((module) => module.commonDiagnoses)).slice(0, 6);
+      const notToMiss = uniqueValues(matchedModules.flatMap((module) => module.notToMissDiagnoses)).slice(0, 6);
+      const redFlags = uniqueValues(matchedModules.flatMap((module) => module.emergencyRedFlags)).slice(0, 6);
+
+      return [
+        `(1) Dấu hiệu cần hỏi/khám: ${requiredChecks.join('; ') || 'Chưa rõ'}.`,
+        `(2) Chẩn đoán thường gặp: ${commonDiagnoses.join('; ') || 'Chưa rõ'}.`,
+        `(3) Ít gặp nhưng không được bỏ sót (Not-to-miss): ${notToMiss.join('; ') || 'Chưa rõ'}.`,
+        `(4) Red flags ưu tiên cấp cứu/khẩn: ${redFlags.join('; ') || 'Chưa rõ'}.`,
+      ].join(' ');
     }
 
     const differentialBySystem: Partial<Record<SystemTag, string[]>> = {
@@ -1733,6 +1803,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     transcript: string,
     triage: TriageInsight,
     gate: InferenceGate,
+    diagnosisOutsideLibrary: boolean,
   ) => {
     const flags: string[] = [];
     if (transcript.trim().length < 30) flags.push('Transcript quá ngắn, mức độ chắc chắn thấp.');
@@ -1745,6 +1816,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     }
     if (!gate.readyForDifferential) {
       flags.push('Hệ thống đang ở chế độ insufficient_data: chỉ định hướng hỏi thêm, chưa lập chẩn đoán phân biệt.');
+    }
+    if (diagnosisOutsideLibrary) {
+      flags.push('bác sĩ chẩn đoán');
     }
     return uniqueValues(flags);
   };
@@ -2045,15 +2119,16 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       next.subjective.hpi_summary = segments.join('. ');
     }
 
+    const matchedModules = matchSyndromeModulesFromContext(clinicalContext, parsedSymptoms, transcriptRaw);
     const inferenceGate = buildInferenceGate(next, transcriptRaw, parsedSymptoms, triage);
 
     next.assessment.primary_diagnosis = assign(
       next.assessment.primary_diagnosis,
-      buildPrimaryAssessmentFromSymptoms(parsedSymptoms, triage, inferenceGate),
+      buildPrimaryAssessmentFromSymptoms(parsedSymptoms, triage, inferenceGate, matchedModules),
     );
     next.assessment.differential_diagnosis = assign(
       next.assessment.differential_diagnosis,
-      buildDifferentialFromSymptoms(parsedSymptoms, triage, inferenceGate),
+      buildDifferentialFromSymptoms(parsedSymptoms, triage, inferenceGate, matchedModules),
     );
     next.assessment.risk_level = assign(next.assessment.risk_level, triage.riskLevel);
 
@@ -2067,8 +2142,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     next.header.critical_flag = triage.level === 'emergency';
     next.evidence_lines = buildEvidenceMapFromTranscript(transcriptRaw, next, parsedSymptoms, triage);
 
+    const diagnosisOutsideLibrary = inferenceGate.readyForDifferential && isDiagnosisOutsideLibrary(next, matchedModules);
     next.missing_info_flags = buildMissingInfoFlags(next, parsedBirthYear, transcriptRaw, triage, inferenceGate);
-    next.uncertainty_flags = buildUncertaintyFlags(next, transcriptRaw, triage, inferenceGate);
+    next.uncertainty_flags = buildUncertaintyFlags(next, transcriptRaw, triage, inferenceGate, diagnosisOutsideLibrary);
     if (!next.disclaimer.trim()) {
       next.disclaimer = 'Thông tin do AI hỗ trợ ghi nhận. Không thay thế chẩn đoán hoặc kê đơn của bác sĩ.';
     }
@@ -2485,6 +2561,10 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   }, [soapView, patientVoiceQuestions]);
 
   const completedPatientChecklist = patientChecklistStatus.filter((item) => item.done).length;
+  const hasDoctorDiagnosisAlert = useMemo(
+    () => (soapView.uncertainty_flags || []).some((flag) => toAsciiLower(flag || '').includes('bac si chan doan')),
+    [soapView.uncertainty_flags],
+  );
 
   const isMissingField = (key: string) => missingRequired.some((item) => item.key === key);
 
@@ -3302,7 +3382,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
             <TriangleAlert className="h-5 w-5" />
           </span>
           <p className="text-xs font-semibold leading-snug text-red-700 sm:text-sm">
-            ( app chủ yếu ghi chú thông tin còn chẩn đoán các thứ thì để bác sĩ )
+            app chủ yếu ghi chú thông tin còn chẩn đoán thì để bác sĩ
           </p>
         </div>
       </div>
@@ -4117,6 +4197,12 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
 
                     <div className="mt-7 grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
+                        {hasDoctorDiagnosisAlert && (
+                          <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-red-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-red-700 ring-1 ring-red-300">
+                            <TriangleAlert className="h-3.5 w-3.5" />
+                            bác sĩ chẩn đoán
+                          </div>
+                        )}
                         <h4 className="text-lg font-bold text-indigo-700 border-b border-indigo-200 pb-2 mb-3">Chẩn đoán & Đánh giá</h4>
                         <div className="space-y-3">
                           <div>
