@@ -4697,7 +4697,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                         <img
                           src={creatorPhotoUrl}
                           alt="Ảnh Lê Việt Anh"
-                          className="h-[220px] w-full rounded-xl object-cover ring-1 ring-indigo-200 transition-transform duration-200 group-hover:scale-[1.01]"
+                          loading="eager"
+                          decoding="sync"
+                          className="h-[300px] w-full rounded-xl object-cover object-[50%_20%] scale-[1.18] origin-top ring-1 ring-indigo-300 shadow-sm contrast-[1.06] saturate-[1.04] transition-transform duration-200 group-hover:scale-[1.22]"
                         />
                       </a>
                       <a
@@ -4737,7 +4739,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                           <img
                             src={creatorPhotoUrl}
                             alt="Ảnh đại diện Lê Việt Anh"
-                            className="h-9 w-9 rounded-full object-cover ring-2 ring-indigo-200"
+                            loading="eager"
+                            decoding="sync"
+                            className="h-12 w-12 rounded-full object-cover object-[50%_20%] ring-2 ring-indigo-200 contrast-[1.06]"
                           />
                         </a>
                         <p className="font-semibold text-slate-900">Lê Việt Anh</p>
@@ -4952,7 +4956,9 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                       <img
                         src={creatorPhotoUrl}
                         alt="Ảnh đại diện Lê Việt Anh"
-                        className="h-9 w-9 rounded-full object-cover ring-2 ring-indigo-200"
+                        loading="eager"
+                        decoding="sync"
+                        className="h-12 w-12 rounded-full object-cover object-[50%_20%] ring-2 ring-indigo-200 contrast-[1.06]"
                       />
                     </a>
                     <p className="font-semibold">Lê Việt Anh - THPT FPT - Lớp 12A6</p>
