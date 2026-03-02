@@ -800,6 +800,12 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     'họ và tên',
     'họ tên',
     'tên bệnh nhân',
+    'can cuoc',
+    'cao cước',
+    'cao cuoc',
+    'cước công dân',
+    'công dân',
+    'cong dan',
     'năm sinh',
     'sinh năm',
     'ngày sinh',
@@ -939,6 +945,12 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       'sinh năm',
       'giới tính',
       'cccd',
+      'can cuoc',
+      'cao cước',
+      'cao cuoc',
+      'cước công dân',
+      'công dân',
+      'cong dan',
       'cmnd',
       'căn cước công dân',
       'căn cước',
@@ -969,7 +981,10 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     const trailingNoiseWords = new Set([
       'can',
       'ca',
+      'cao',
       'cuoc',
+      'cong',
+      'dan',
       'cccd',
       'cmnd',
       'ma',
@@ -1021,7 +1036,23 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     const labeled = extractLabeledValue(
       text,
       ['họ và tên', 'họ tên', 'tên bệnh nhân', 'họ tên bệnh nhân'],
-      ['năm sinh', 'ngày sinh', 'giới tính', 'cccd', 'căn cước', 'cmnd', 'mã bệnh', 'lý do', 'triệu chứng'],
+      [
+        'năm sinh',
+        'ngày sinh',
+        'giới tính',
+        'cccd',
+        'can cuoc',
+        'cao cước',
+        'cao cuoc',
+        'cước công dân',
+        'công dân',
+        'cong dan',
+        'căn cước',
+        'cmnd',
+        'mã bệnh',
+        'lý do',
+        'triệu chứng',
+      ],
     );
     if (labeled) {
       return cleanCandidateName(labeled);
@@ -1032,6 +1063,18 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       /(?:bệnh\s*nhân|bn)\s*(?:là|tên)\s*:?\s*([A-Za-zÀ-ỹ\s]{2,80}?)(?=(?:\b(?:năm\s*sinh|giới\s*tính|cccd|căn\s*cước|cmnd|chứng\s*minh|mã\s*bệnh|lý\s*do|triệu\s*chứng|tiền\s*sử|dị\s*ứng|thuốc)\b|[,.!?\n]|$))/i,
     ];
     for (const re of patterns) {
+      const match = text.match(re);
+      if (match?.[1]) {
+        const cleaned = cleanCandidateName(match[1]);
+        if (cleaned) return cleaned;
+      }
+    }
+
+    const looseSpokenPatterns = [
+      /(?:tôi|em|cháu)\s*(?:xin\s*giới\s*thiệu\s*)?(?:họ\s*và\s*tên|họ\s*tên|tên)\s*(?:của\s*(?:tôi|em|cháu))?\s*(?:là|:)?\s*([^\n]{2,160})/i,
+      /(?:họ\s*và\s*tên|họ\s*tên|tên\s*bệnh\s*nhân)\s*(?:là|:)?\s*([^\n]{2,160})/i,
+    ];
+    for (const re of looseSpokenPatterns) {
       const match = text.match(re);
       if (match?.[1]) {
         const cleaned = cleanCandidateName(match[1]);
@@ -1387,25 +1430,40 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   };
 
   const evaluateChecklistAnswers = (draft: SoapData, transcript: string) => {
-    const transcriptSymptoms = parseCurrentSymptomsFromText(transcript || '');
+    const transcriptText = transcript || '';
+    const transcriptName = parseNameFromText(transcriptText);
+    const transcriptSex = parseSexFromText(transcriptText);
+    const transcriptIdentifier = parsePatientIdentifierFromText(transcriptText);
+    const transcriptDob = parseDobFromText(transcriptText);
+    const transcriptBirthYear = parseBirthYearFromText(transcriptText);
+    const transcriptAge = parseAgeFromText(transcriptText) || inferAgeFromBirthYear(transcriptBirthYear, new Date());
+    const transcriptSymptoms = parseCurrentSymptomsFromText(transcriptText);
+    const transcriptPmh = parseRelevantPmhFromText(transcriptText);
+    const transcriptAllergies = parseAllergiesFromText(transcriptText);
+    const transcriptMeds = parseCurrentMedsFromText(transcriptText);
     const hpiSignals = /đau|sốt|khó thở|choáng|chóng mặt|nôn|tiêu chảy/i.test(draft.subjective.hpi_summary || '');
     const hasFullHistorySection3 = Boolean(
-      draft.subjective.relevant_pmh.trim() &&
-      draft.subjective.allergies.trim() &&
-      draft.subjective.current_meds.trim(),
+      (draft.subjective.relevant_pmh.trim() || transcriptPmh.trim()) &&
+      (draft.subjective.allergies.trim() || transcriptAllergies.trim()) &&
+      (draft.subjective.current_meds.trim() || transcriptMeds.trim()),
+    );
+    const hasIdentityAnchor = Boolean(
+      (draft.header.patient_name.trim() || transcriptName.trim()) ||
+        (draft.header.patient_identifier.trim() || transcriptIdentifier.trim()),
+    );
+    const hasPatientCore = Boolean(
+      hasIdentityAnchor &&
+        (draft.header.sex.trim() || transcriptSex.trim()) &&
+        (draft.header.dob.trim() || draft.header.age.trim() || transcriptDob.trim() || transcriptAge.trim()),
     );
 
     const qStatus: Record<ChecklistQuestionId, boolean> = {
-      q1: Boolean(
-        draft.header.patient_name.trim() &&
-          draft.header.sex.trim() &&
-          (draft.header.dob.trim() || draft.header.age.trim()),
-      ),
-      q2: Boolean(draft.header.patient_identifier.trim()),
+      q1: hasPatientCore,
+      q2: Boolean(draft.header.patient_identifier.trim() || transcriptIdentifier.trim()),
       q3: Boolean(draft.subjective.chief_complaint.trim()),
       q4: Boolean(draft.subjective.hpi_summary.trim()),
       q5: Boolean(transcriptSymptoms.length || hpiSignals),
-      q6: Boolean(draft.subjective.relevant_pmh.trim()),
+      q6: Boolean(draft.subjective.relevant_pmh.trim() || transcriptPmh.trim()),
       q7: hasFullHistorySection3,
     };
 
@@ -2996,8 +3054,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
   }, [mode]);
 
   useEffect(() => {
-    const shouldAutoDraftFromLive = mode === 'dictation' || recordingAudience === 'patient_only';
-    if (!shouldAutoDraftFromLive) return;
+    if (!isRecording) return;
     if (result) return;
     const mergedTranscript = `${liveTranscript} ${interimTranscript}`.trim();
     if (!mergedTranscript) return;
@@ -3005,7 +3062,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
       applyDraftFromTranscript(mergedTranscript, { overwriteExisting: true });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [liveTranscript, interimTranscript, mode, recordingAudience, result]);
+  }, [liveTranscript, interimTranscript, isRecording, result]);
 
   const startRecording = async () => {
     try {
@@ -3214,8 +3271,14 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
           ? { ...data, transcript: transcriptHint }
           : data;
       let enriched = enrichSoapData(dataWithTranscript);
-      if (transcriptHint && hasSparseStructuredData(dataWithTranscript)) {
-        enriched = hydrateSoapFromTranscript(enriched, transcriptHint, { overwriteExisting: true });
+      if (transcriptHint) {
+        const checklistAfterServer = evaluateChecklistAnswers(enriched, enriched.transcript || transcriptHint);
+        const shouldHydrateHint =
+          hasSparseStructuredData(dataWithTranscript) || !checklistAfterServer.qStatus.q1 || !checklistAfterServer.qStatus.q7;
+        if (shouldHydrateHint) {
+          const mergedTranscript = normalizeCapturedValue(`${enriched.transcript || ''} ${transcriptHint}`);
+          enriched = hydrateSoapFromTranscript(enriched, mergedTranscript || transcriptHint, { overwriteExisting: true });
+        }
       }
       setResult(enriched);
       setFormSoap(enriched);
