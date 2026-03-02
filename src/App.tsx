@@ -3916,7 +3916,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
         ) : (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Action Bar */}
-            <div className="no-print flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 sticky top-20 z-10">
+            <div className="no-print flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 sticky top-20 z-30">
               <div className="flex items-center gap-2">
                 {workflowStatus === 'done' ? (
                   <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
@@ -3990,6 +3990,15 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
               </div>
             )}
 
+            {showSplitView && recordingAudience === 'patient_only' && (
+              <div className="no-print bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <h3 className="text-sm font-semibold text-slate-800 mb-1">Cách trả lời</h3>
+                <p className="text-xs text-slate-700">
+                  Đọc câu hỏi trước, sau đó đọc câu trả lời tương ứng theo đúng thứ tự 1 đến 7.
+                </p>
+              </div>
+            )}
+
             {showSplitView && missingRequired.length > 0 && (
               <div className="no-print bg-red-50 border border-red-200 rounded-2xl p-4">
                 <h3 className="text-sm font-semibold text-red-700 flex items-center gap-1.5 mb-3">
@@ -4046,9 +4055,6 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                       <h3 className="text-sm font-semibold text-slate-900">Câu hỏi cho bệnh nhân (bắt buộc)</h3>
                       <p className="mt-1 text-[11px] font-semibold text-red-600">
                         Bệnh nhân phải trả lời đủ từng câu theo thứ tự.
-                      </p>
-                      <p className="mt-1 text-[11px] text-slate-600">
-                        Cách trả lời: đọc câu hỏi trước, sau đó đọc câu trả lời tương ứng.
                       </p>
                     </div>
                     <div className="p-4 space-y-3">
@@ -4142,7 +4148,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
               {/* Right Column: Structured SOAP Form */}
               <div className={`relative ${recordingAudience === 'patient_only' ? 'lg:col-span-2 print:col-span-4' : 'lg:col-span-2 print:col-span-3'}`}>
                 {loading && (
-                  <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-10 flex items-center justify-center rounded-2xl">
+                  <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-20 flex items-center justify-center rounded-2xl">
                     <div className="bg-white p-4 rounded-xl shadow-lg flex items-center gap-3 text-indigo-600 font-medium">
                       <LoaderCircle className="w-5 h-5 animate-spin" /> Đang điền dữ liệu...
                     </div>
