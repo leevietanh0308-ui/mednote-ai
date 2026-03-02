@@ -3991,11 +3991,15 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
             )}
 
             {showSplitView && recordingAudience === 'patient_only' && (
-              <div className="no-print bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                <h3 className="text-sm font-semibold text-slate-800 mb-1">Cách trả lời</h3>
-                <p className="text-xs text-slate-700">
-                  Đọc câu hỏi trước, sau đó đọc câu trả lời tương ứng theo đúng thứ tự 1 đến 7.
-                </p>
+              <div className="no-print relative overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-indigo-50 p-4">
+                <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-indigo-300/40 blur-3xl animate-pulse" />
+                <div className="pointer-events-none absolute -bottom-10 -left-8 h-32 w-32 rounded-full bg-sky-300/35 blur-3xl animate-pulse [animation-delay:700ms]" />
+                <div className="relative">
+                  <h3 className="text-sm font-semibold text-indigo-800 mb-1">Cách trả lời</h3>
+                  <p className="text-xs text-slate-700">
+                    Đọc câu hỏi trước, sau đó đọc câu trả lời tương ứng theo đúng thứ tự 1 đến 7.
+                  </p>
+                </div>
               </div>
             )}
 
