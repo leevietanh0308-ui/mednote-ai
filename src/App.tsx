@@ -4671,40 +4671,46 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                 <span className="text-xs text-slate-500">{examHistory.length} bản ghi</span>
               </div>
               <div className="overflow-auto">
-                <table className="min-w-full text-sm">
+                <table className="w-full min-w-[1280px] table-fixed text-sm">
                   <thead className="bg-slate-50">
                     <tr className="text-left text-slate-600">
-                      <th className="px-3 py-2 font-semibold">Thời điểm lưu</th>
-                      <th className="px-3 py-2 font-semibold">Tên phiếu</th>
-                      <th className="px-3 py-2 font-semibold">Bệnh nhân</th>
-                      <th className="px-3 py-2 font-semibold">Ghi chú</th>
-                      <th className="px-3 py-2 font-semibold">CCCD/Mã BN</th>
-                      <th className="px-3 py-2 font-semibold">Giờ khám</th>
-                      <th className="px-3 py-2 font-semibold">Lý do khám</th>
-                      <th className="px-3 py-2 font-semibold">Chẩn đoán chính</th>
-                      <th className="px-3 py-2 font-semibold">Thời lượng</th>
-                      <th className="px-3 py-2 font-semibold">Mức độ</th>
-                      <th className="px-3 py-2 font-semibold">Xem lại</th>
+                      <th className="w-[170px] px-3 py-2 font-semibold">Thời điểm</th>
+                      <th className="w-[230px] px-3 py-2 font-semibold">Tên phiếu</th>
+                      <th className="w-[150px] px-3 py-2 font-semibold">Bệnh nhân</th>
+                      <th className="w-[170px] px-3 py-2 font-semibold">Ghi chú</th>
+                      <th className="w-[130px] px-3 py-2 font-semibold">CCCD/Mã BN</th>
+                      <th className="w-[260px] px-3 py-2 font-semibold">Lý do khám</th>
+                      <th className="w-[300px] px-3 py-2 font-semibold">Chẩn đoán chính</th>
+                      <th className="w-[90px] px-3 py-2 font-semibold">Thời lượng</th>
+                      <th className="w-[95px] px-3 py-2 font-semibold">Mức độ</th>
+                      <th className="w-[105px] px-3 py-2 font-semibold text-right">Xem lại</th>
                     </tr>
                   </thead>
                   <tbody>
                     {examHistory.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-3 py-6 text-center text-slate-500">
+                        <td colSpan={10} className="px-3 py-6 text-center text-slate-500">
                           Chưa có lịch sử khám. Hãy tạo SOAP hoặc lưu phiếu khám để bắt đầu.
                         </td>
                       </tr>
                     ) : (
                       examHistory.slice(0, 50).map((item) => (
                         <tr key={item.id} className="border-t border-slate-100 hover:bg-indigo-50/30">
-                          <td className="px-3 py-2 text-slate-600">{formatHistoryTime(item.savedAt)}</td>
-                          <td className="px-3 py-2 text-slate-700 max-w-[220px] truncate" title={item.sheetTitle}>
+                          <td className="px-3 py-2 align-top text-slate-600">
+                            <p className="font-medium text-slate-700">{formatHistoryTime(item.savedAt)}</p>
+                            <p className="mt-1 truncate text-[11px] text-slate-500" title={item.examDateTime || 'Chưa rõ'}>
+                              Khám: {item.examDateTime || 'Chưa rõ'}
+                            </p>
+                          </td>
+                          <td className="px-3 py-2 align-top text-slate-700 truncate" title={item.sheetTitle}>
                             {item.sheetTitle || 'Chưa có'}
                           </td>
-                          <td className="px-3 py-2 font-medium text-slate-800">{item.patientName || 'Chưa rõ'}</td>
-                          <td className="px-3 py-2 text-slate-700 max-w-[220px]">
+                          <td className="px-3 py-2 align-top font-medium text-slate-800 truncate" title={item.patientName}>
+                            {item.patientName || 'Chưa rõ'}
+                          </td>
+                          <td className="px-3 py-2 align-top text-slate-700">
                             <span
-                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
                                 item.mode === 'dictation'
                                   ? 'bg-violet-100 text-violet-700'
                                   : item.recordingAudience === 'patient_only'
@@ -4713,30 +4719,35 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                               }`}
                               title={item.contextNote}
                             >
-                              {item.contextNote || 'Chưa có ghi chú'}
+                              {item.mode === 'dictation'
+                                ? 'Bác sĩ đọc lại'
+                                : item.recordingAudience === 'patient_only'
+                                  ? 'BN tự giới thiệu'
+                                  : 'BS + BN trực tiếp'}
                             </span>
                           </td>
-                          <td className="px-3 py-2 text-slate-700">{item.patientIdentifier || 'Chưa rõ'}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.examDateTime || 'Chưa rõ'}</td>
-                          <td className="px-3 py-2 text-slate-700 max-w-[260px] truncate" title={item.chiefComplaint}>
+                          <td className="px-3 py-2 align-top text-slate-700 truncate" title={item.patientIdentifier}>
+                            {item.patientIdentifier || 'Chưa rõ'}
+                          </td>
+                          <td className="px-3 py-2 align-top text-slate-700 truncate" title={item.chiefComplaint}>
                             {item.chiefComplaint || 'Chưa rõ'}
                           </td>
-                          <td className="px-3 py-2 text-slate-700 max-w-[260px] truncate" title={item.primaryDiagnosis}>
+                          <td className="px-3 py-2 align-top text-slate-700 truncate" title={item.primaryDiagnosis}>
                             {item.primaryDiagnosis || 'Chưa rõ'}
                           </td>
-                          <td className="px-3 py-2 text-slate-700">{formatHistoryDuration(item.durationSec)}</td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top text-slate-700">{formatHistoryDuration(item.durationSec)}</td>
+                          <td className="px-3 py-2 align-top">
                             {item.critical ? (
                               <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Nặng</span>
                             ) : (
                               <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Thường</span>
                             )}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top text-right">
                             <button
                               type="button"
                               onClick={() => openHistoryDetail(item)}
-                              className="inline-flex items-center rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                              className="inline-flex min-w-[76px] items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
                             >
                               Mở phiếu
                             </button>
