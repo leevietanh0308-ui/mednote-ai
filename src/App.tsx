@@ -98,6 +98,9 @@ interface ExamHistoryItem {
   historyKey: string;
   source: 'generated' | 'saved';
   savedAt: string;
+  mode: Mode;
+  recordingAudience: 'doctor_patient' | 'patient_only';
+  contextNote: string;
   sheetTitle: string;
   encounterId: string;
   patientName: string;
@@ -111,6 +114,7 @@ interface ExamHistoryItem {
   primaryDiagnosis: string;
   riskLevel: string;
   critical: boolean;
+  soapSnapshot: SoapData;
 }
 
 type MainPage = 'exam' | 'history' | 'template' | 'creator_info';
@@ -133,6 +137,7 @@ type DemoVoiceCase = {
 
 export default function App() {
   const HISTORY_STORAGE_KEY = 'mednote_exam_history_v1';
+  const HISTORY_LIMIT = 120;
   const [mode, setMode] = useState<Mode>('in_room');
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2852,45 +2857,257 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     return `${patientPart}_${idPart}_${diseasePart}`;
   };
 
-  const buildHistoryItem = (data: SoapData, source: ExamHistoryItem['source']): ExamHistoryItem => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    historyKey: buildHistoryKey({
-      encounterId: data.header.encounter_id,
-      patientName: data.header.patient_name,
-      patientIdentifier: data.header.patient_identifier,
-      examDateTime: data.header.datetime,
-      examStartedAt: data.header.exam_started_at,
-      examEndedAt: data.header.exam_ended_at,
-    }),
-    source,
-    savedAt: new Date().toISOString(),
-    sheetTitle: buildSheetTitle({
-      patientName: data.header.patient_name,
-      patientIdentifier: data.header.patient_identifier,
-      disease: data.assessment.primary_diagnosis,
-      chiefComplaint: data.subjective.chief_complaint,
-    }),
-    encounterId: data.header.encounter_id || '',
-    patientName: data.header.patient_name || '',
-    patientIdentifier: data.header.patient_identifier || '',
-    sex: data.header.sex || '',
-    examDateTime: data.header.datetime || '',
-    examStartedAt: data.header.exam_started_at || '',
-    examEndedAt: data.header.exam_ended_at || '',
-    durationSec: estimateDurationSec(data),
-    chiefComplaint: data.subjective.chief_complaint || '',
-    primaryDiagnosis: data.assessment.primary_diagnosis || '',
-    riskLevel: data.assessment.risk_level || '',
-    critical: Boolean(data.header.critical_flag),
+  const createHistoryId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const normalizeModeValue = (value: unknown): Mode => (value === 'dictation' ? 'dictation' : 'in_room');
+
+  const normalizeRecordingAudience = (value: unknown): RecordingAudience =>
+    value === 'patient_only' ? 'patient_only' : 'doctor_patient';
+
+  const buildHistoryContextNote = (modeValue: Mode, audienceValue: RecordingAudience) => {
+    if (modeValue === 'dictation') {
+      return 'Bác sĩ đọc lại sau khám (Dictation)';
+    }
+    if (audienceValue === 'patient_only') {
+      return 'Bệnh nhân tự giới thiệu triệu chứng';
+    }
+    return 'Bác sĩ + bệnh nhân trao đổi trực tiếp';
+  };
+
+  const cloneSoapData = (data: SoapData): SoapData => JSON.parse(JSON.stringify(data));
+
+  const sanitizeSoapSnapshot = (candidate: unknown): SoapData | null => {
+    if (!candidate || typeof candidate !== 'object') return null;
+
+    try {
+      const parsed = JSON.parse(JSON.stringify(candidate)) as Partial<SoapData>;
+      const medications = Array.isArray(parsed.plan?.medications)
+        ? parsed.plan.medications
+            .filter((med): med is Partial<Medication> => Boolean(med && typeof med === 'object'))
+            .map((med) => ({
+              name: typeof med.name === 'string' ? med.name : '',
+              dose: typeof med.dose === 'string' ? med.dose : '',
+              duration: typeof med.duration === 'string' ? med.duration : '',
+            }))
+        : [];
+
+      const evidenceLines = parsed.evidence_lines && typeof parsed.evidence_lines === 'object'
+        ? Object.fromEntries(
+            Object.entries(parsed.evidence_lines).map(([key, value]) => [
+              key,
+              Array.isArray(value) ? value.filter((line): line is string => typeof line === 'string') : [],
+            ]),
+          )
+        : {};
+
+      const normalized: SoapData = {
+        ...emptySoap,
+        ...parsed,
+        mode: normalizeModeValue(parsed.mode),
+        language: typeof parsed.language === 'string' && parsed.language.trim() ? parsed.language : 'vi',
+        transcript: typeof parsed.transcript === 'string' ? parsed.transcript : '',
+        header: {
+          ...emptySoap.header,
+          ...(parsed.header && typeof parsed.header === 'object' ? parsed.header : {}),
+        },
+        subjective: {
+          ...emptySoap.subjective,
+          ...(parsed.subjective && typeof parsed.subjective === 'object' ? parsed.subjective : {}),
+        },
+        assessment: {
+          ...emptySoap.assessment,
+          ...(parsed.assessment && typeof parsed.assessment === 'object' ? parsed.assessment : {}),
+        },
+        plan: {
+          ...emptySoap.plan,
+          ...(parsed.plan && typeof parsed.plan === 'object' ? parsed.plan : {}),
+          medications,
+        },
+        note_text: typeof parsed.note_text === 'string' ? parsed.note_text : '',
+        evidence_lines: evidenceLines,
+        missing_info_flags: Array.isArray(parsed.missing_info_flags)
+          ? parsed.missing_info_flags.filter((flag): flag is string => typeof flag === 'string')
+          : [],
+        uncertainty_flags: Array.isArray(parsed.uncertainty_flags)
+          ? parsed.uncertainty_flags.filter((flag): flag is string => typeof flag === 'string')
+          : [],
+        disclaimer: typeof parsed.disclaimer === 'string' ? parsed.disclaimer : '',
+      };
+
+      return normalized;
+    } catch {
+      return null;
+    }
+  };
+
+  const buildSoapFromHistorySummary = (item: any): SoapData => ({
+    ...emptySoap,
+    mode: normalizeModeValue(item?.mode),
+    language: 'vi',
+    transcript: typeof item?.transcript === 'string' ? item.transcript : '',
+    header: {
+      ...emptySoap.header,
+      encounter_id: typeof item?.encounterId === 'string' ? item.encounterId : '',
+      datetime: typeof item?.examDateTime === 'string' ? item.examDateTime : '',
+      patient_name: typeof item?.patientName === 'string' ? item.patientName : '',
+      patient_identifier: typeof item?.patientIdentifier === 'string' ? item.patientIdentifier : '',
+      sex: typeof item?.sex === 'string' ? item.sex : '',
+      exam_started_at: typeof item?.examStartedAt === 'string' ? item.examStartedAt : '',
+      exam_ended_at: typeof item?.examEndedAt === 'string' ? item.examEndedAt : '',
+      critical_flag: Boolean(item?.critical),
+    },
+    subjective: {
+      ...emptySoap.subjective,
+      chief_complaint: typeof item?.chiefComplaint === 'string' ? item.chiefComplaint : '',
+    },
+    assessment: {
+      ...emptySoap.assessment,
+      primary_diagnosis: typeof item?.primaryDiagnosis === 'string' ? item.primaryDiagnosis : '',
+      risk_level: typeof item?.riskLevel === 'string' ? item.riskLevel : '',
+    },
+    uncertainty_flags: ['Bản ghi cũ chưa lưu đầy đủ phiếu chi tiết, hệ thống đã phục dựng từ dữ liệu tóm tắt.'],
+    disclaimer: 'Bản ghi lịch sử được phục dựng từ dữ liệu tóm tắt.',
   });
+
+  const normalizeHistoryItem = (item: any): ExamHistoryItem | null => {
+    if (!item || typeof item !== 'object') return null;
+
+    const normalizedSnapshot = sanitizeSoapSnapshot(item.soapSnapshot) ?? buildSoapFromHistorySummary(item);
+    const modeValue = normalizeModeValue(item.mode ?? normalizedSnapshot.mode);
+    const audienceValue = modeValue === 'dictation' ? 'doctor_patient' : normalizeRecordingAudience(item.recordingAudience);
+    const contextNoteValue =
+      typeof item.contextNote === 'string' && item.contextNote.trim()
+        ? item.contextNote
+        : buildHistoryContextNote(modeValue, audienceValue);
+    const durationValue = Number(item.durationSec);
+    const patientName = typeof item.patientName === 'string' && item.patientName.trim()
+      ? item.patientName
+      : normalizedSnapshot.header.patient_name;
+    const patientIdentifier = typeof item.patientIdentifier === 'string' && item.patientIdentifier.trim()
+      ? item.patientIdentifier
+      : normalizedSnapshot.header.patient_identifier;
+    const examDateTime = typeof item.examDateTime === 'string' && item.examDateTime.trim()
+      ? item.examDateTime
+      : normalizedSnapshot.header.datetime;
+    const examStartedAt = typeof item.examStartedAt === 'string' && item.examStartedAt.trim()
+      ? item.examStartedAt
+      : normalizedSnapshot.header.exam_started_at;
+    const examEndedAt = typeof item.examEndedAt === 'string' && item.examEndedAt.trim()
+      ? item.examEndedAt
+      : normalizedSnapshot.header.exam_ended_at;
+    const encounterId = typeof item.encounterId === 'string' ? item.encounterId : normalizedSnapshot.header.encounter_id || '';
+    const savedAt =
+      typeof item.savedAt === 'string' && item.savedAt.trim()
+        ? item.savedAt
+        : new Date().toISOString();
+
+    const normalized: ExamHistoryItem = {
+      id: typeof item.id === 'string' && item.id ? item.id : createHistoryId(),
+      historyKey:
+        typeof item.historyKey === 'string' && item.historyKey
+          ? item.historyKey
+          : buildHistoryKey({
+              encounterId,
+              patientName,
+              patientIdentifier,
+              examDateTime,
+              examStartedAt,
+              examEndedAt,
+            }),
+      source: item.source === 'saved' ? 'saved' : 'generated',
+      savedAt,
+      mode: modeValue,
+      recordingAudience: audienceValue,
+      contextNote: contextNoteValue,
+      sheetTitle:
+        typeof item.sheetTitle === 'string' && item.sheetTitle
+          ? item.sheetTitle
+          : buildSheetTitle({
+              patientName,
+              patientIdentifier,
+              disease:
+                typeof item.primaryDiagnosis === 'string'
+                  ? item.primaryDiagnosis
+                  : normalizedSnapshot.assessment.primary_diagnosis,
+              chiefComplaint:
+                typeof item.chiefComplaint === 'string'
+                  ? item.chiefComplaint
+                  : normalizedSnapshot.subjective.chief_complaint,
+            }),
+      encounterId,
+      patientName: patientName || '',
+      patientIdentifier: patientIdentifier || '',
+      sex:
+        (typeof item.sex === 'string' && item.sex.trim() ? item.sex : normalizedSnapshot.header.sex) || '',
+      examDateTime: examDateTime || '',
+      examStartedAt: examStartedAt || '',
+      examEndedAt: examEndedAt || '',
+      durationSec: Number.isFinite(durationValue) && durationValue >= 0 ? Math.round(durationValue) : estimateDurationSec(normalizedSnapshot),
+      chiefComplaint:
+        (typeof item.chiefComplaint === 'string' ? item.chiefComplaint : normalizedSnapshot.subjective.chief_complaint) || '',
+      primaryDiagnosis:
+        (typeof item.primaryDiagnosis === 'string'
+          ? item.primaryDiagnosis
+          : normalizedSnapshot.assessment.primary_diagnosis) || '',
+      riskLevel:
+        (typeof item.riskLevel === 'string' ? item.riskLevel : normalizedSnapshot.assessment.risk_level) || '',
+      critical:
+        typeof item.critical === 'boolean' ? item.critical : Boolean(normalizedSnapshot.header.critical_flag),
+      soapSnapshot: { ...normalizedSnapshot, mode: modeValue },
+    };
+
+    return normalized;
+  };
+
+  const buildHistoryItem = (data: SoapData, source: ExamHistoryItem['source']): ExamHistoryItem => {
+    const modeValue = normalizeModeValue(data.mode);
+    const snapshot = cloneSoapData({ ...data, mode: modeValue });
+
+    return {
+      id: createHistoryId(),
+      historyKey: buildHistoryKey({
+        encounterId: snapshot.header.encounter_id,
+        patientName: snapshot.header.patient_name,
+        patientIdentifier: snapshot.header.patient_identifier,
+        examDateTime: snapshot.header.datetime,
+        examStartedAt: snapshot.header.exam_started_at,
+        examEndedAt: snapshot.header.exam_ended_at,
+      }),
+      source,
+      savedAt: new Date().toISOString(),
+      mode: modeValue,
+      recordingAudience: modeValue === 'dictation' ? 'doctor_patient' : recordingAudience,
+      contextNote: buildHistoryContextNote(
+        modeValue,
+        modeValue === 'dictation' ? 'doctor_patient' : recordingAudience,
+      ),
+      sheetTitle: buildSheetTitle({
+        patientName: snapshot.header.patient_name,
+        patientIdentifier: snapshot.header.patient_identifier,
+        disease: snapshot.assessment.primary_diagnosis,
+        chiefComplaint: snapshot.subjective.chief_complaint,
+      }),
+      encounterId: snapshot.header.encounter_id || '',
+      patientName: snapshot.header.patient_name || '',
+      patientIdentifier: snapshot.header.patient_identifier || '',
+      sex: snapshot.header.sex || '',
+      examDateTime: snapshot.header.datetime || '',
+      examStartedAt: snapshot.header.exam_started_at || '',
+      examEndedAt: snapshot.header.exam_ended_at || '',
+      durationSec: estimateDurationSec(snapshot),
+      chiefComplaint: snapshot.subjective.chief_complaint || '',
+      primaryDiagnosis: snapshot.assessment.primary_diagnosis || '',
+      riskLevel: snapshot.assessment.risk_level || '',
+      critical: Boolean(snapshot.header.critical_flag),
+      soapSnapshot: snapshot,
+    };
+  };
 
   const addToHistory = (data: SoapData, source: ExamHistoryItem['source']) => {
     const incoming = buildHistoryItem(data, source);
     setExamHistory((prev) => {
       const matchedIndex = prev.findIndex((item) => item.historyKey === incoming.historyKey);
-      if (matchedIndex === -1) {
-        return [incoming, ...prev].slice(0, 200);
-      }
+      if (matchedIndex === -1) return [incoming, ...prev].slice(0, HISTORY_LIMIT);
 
       const existing = prev[matchedIndex];
       const merged: ExamHistoryItem = {
@@ -2901,7 +3118,7 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
         savedAt: new Date().toISOString(),
       };
 
-      return [merged, ...prev.filter((_, index) => index !== matchedIndex)].slice(0, 200);
+      return [merged, ...prev.filter((_, index) => index !== matchedIndex)].slice(0, HISTORY_LIMIT);
     });
   };
 
@@ -2976,38 +3193,48 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
     return `${mm}:${ss}`;
   };
 
+  const openHistoryDetail = (item: ExamHistoryItem) => {
+    const snapshot = sanitizeSoapSnapshot(item.soapSnapshot) ?? buildSoapFromHistorySummary(item);
+    const restoredMode = normalizeModeValue(item.mode ?? snapshot.mode);
+    const restoredAudience: RecordingAudience =
+      restoredMode === 'dictation' ? 'doctor_patient' : normalizeRecordingAudience(item.recordingAudience);
+    const restoredSoap: SoapData = {
+      ...snapshot,
+      mode: restoredMode,
+      language: snapshot.language || 'vi',
+    };
+
+    stopDemoVoice();
+    setMode(restoredMode);
+    setRecordingAudience(restoredAudience);
+    setExamFlowPage(restoredAudience === 'patient_only' ? 'patient_only' : 'doctor_patient');
+    setActivePage('exam');
+    setShowSplitView(true);
+    setResult(restoredSoap);
+    setFormSoap(restoredSoap);
+    setTemplateExampleNotice(false);
+    setLiveTranscript(restoredSoap.transcript || '');
+    setInterimTranscript('');
+    setError(null);
+  };
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const normalizedHistory = parsed.map((item: any) => {
-          if (item && typeof item === 'object' && item.sheetTitle && item.historyKey) return item as ExamHistoryItem;
-          return {
-            ...item,
-            sheetTitle: buildSheetTitle({
-              patientName: item?.patientName,
-              patientIdentifier: item?.patientIdentifier,
-              disease: item?.primaryDiagnosis,
-              chiefComplaint: item?.chiefComplaint,
-            }),
-            historyKey: buildHistoryKey({
-              encounterId: item?.encounterId,
-              patientName: item?.patientName,
-              patientIdentifier: item?.patientIdentifier,
-              examDateTime: item?.examDateTime,
-              examStartedAt: item?.examStartedAt,
-              examEndedAt: item?.examEndedAt,
-            }),
-          } as ExamHistoryItem;
-        });
+        const normalizedHistory = parsed
+          .map((item: any) => normalizeHistoryItem(item))
+          .filter((item): item is ExamHistoryItem => Boolean(item))
+          .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
+          .slice(0, HISTORY_LIMIT);
         setExamHistory(normalizedHistory);
       }
     } catch {
       // ignore corrupted history
     }
-  }, [HISTORY_STORAGE_KEY]);
+  }, [HISTORY_STORAGE_KEY, HISTORY_LIMIT]);
 
   useEffect(() => {
     try {
@@ -4415,14 +4642,20 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                     <p className="text-xs text-slate-500">Chưa có lịch sử khám.</p>
                   ) : (
                     latestHistory.slice(0, 4).map((item) => (
-                      <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => openHistoryDetail(item)}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40"
+                      >
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-semibold text-slate-800 truncate">{item.sheetTitle || item.patientName || 'Chưa rõ tên'}</p>
                           {item.critical && <span className="text-[10px] font-bold text-red-600">NẶNG</span>}
                         </div>
                         <p className="text-[11px] text-slate-500 truncate">{item.patientName || 'Chưa rõ bệnh nhân'} | {item.primaryDiagnosis || 'Chưa rõ chẩn đoán'}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{item.contextNote || 'Chưa có ghi chú bối cảnh'}</p>
                         <p className="text-[10px] text-slate-400">{formatHistoryTime(item.savedAt)}</p>
-                      </div>
+                      </button>
                     ))
                   )}
                 </div>
@@ -4444,29 +4677,45 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                       <th className="px-3 py-2 font-semibold">Thời điểm lưu</th>
                       <th className="px-3 py-2 font-semibold">Tên phiếu</th>
                       <th className="px-3 py-2 font-semibold">Bệnh nhân</th>
+                      <th className="px-3 py-2 font-semibold">Ghi chú</th>
                       <th className="px-3 py-2 font-semibold">CCCD/Mã BN</th>
                       <th className="px-3 py-2 font-semibold">Giờ khám</th>
                       <th className="px-3 py-2 font-semibold">Lý do khám</th>
                       <th className="px-3 py-2 font-semibold">Chẩn đoán chính</th>
                       <th className="px-3 py-2 font-semibold">Thời lượng</th>
                       <th className="px-3 py-2 font-semibold">Mức độ</th>
+                      <th className="px-3 py-2 font-semibold">Xem lại</th>
                     </tr>
                   </thead>
                   <tbody>
                     {examHistory.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                        <td colSpan={11} className="px-3 py-6 text-center text-slate-500">
                           Chưa có lịch sử khám. Hãy tạo SOAP hoặc lưu phiếu khám để bắt đầu.
                         </td>
                       </tr>
                     ) : (
                       examHistory.slice(0, 50).map((item) => (
-                        <tr key={item.id} className="border-t border-slate-100">
+                        <tr key={item.id} className="border-t border-slate-100 hover:bg-indigo-50/30">
                           <td className="px-3 py-2 text-slate-600">{formatHistoryTime(item.savedAt)}</td>
                           <td className="px-3 py-2 text-slate-700 max-w-[220px] truncate" title={item.sheetTitle}>
                             {item.sheetTitle || 'Chưa có'}
                           </td>
                           <td className="px-3 py-2 font-medium text-slate-800">{item.patientName || 'Chưa rõ'}</td>
+                          <td className="px-3 py-2 text-slate-700 max-w-[220px]">
+                            <span
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                item.mode === 'dictation'
+                                  ? 'bg-violet-100 text-violet-700'
+                                  : item.recordingAudience === 'patient_only'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-indigo-100 text-indigo-700'
+                              }`}
+                              title={item.contextNote}
+                            >
+                              {item.contextNote || 'Chưa có ghi chú'}
+                            </span>
+                          </td>
                           <td className="px-3 py-2 text-slate-700">{item.patientIdentifier || 'Chưa rõ'}</td>
                           <td className="px-3 py-2 text-slate-700">{item.examDateTime || 'Chưa rõ'}</td>
                           <td className="px-3 py-2 text-slate-700 max-w-[260px] truncate" title={item.chiefComplaint}>
@@ -4482,6 +4731,15 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
                             ) : (
                               <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Thường</span>
                             )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => openHistoryDetail(item)}
+                              className="inline-flex items-center rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                            >
+                              Mở phiếu
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -4528,19 +4786,14 @@ Bệnh nhân: Thuốc gần đây: có xịt thuốc cắt cơn hen (salbutamol)
               </div>
               <div className="bg-slate-100 p-4 md:p-6">
                 <div className="relative mx-auto w-full max-w-[840px] min-h-[1065px] rounded-2xl border border-slate-300 bg-white p-3 md:p-6 shadow-sm overflow-hidden bg-[radial-gradient(#d9e3f2_1px,transparent_1px)] bg-[length:18px_18px]">
-                  <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
-                    <div className="absolute left-1/2 top-1/2 w-[162%] -translate-x-1/2 -translate-y-1/2 -rotate-[45deg]">
-                      <p className="select-none whitespace-nowrap w-full text-center text-[20px] md:text-[30px] font-black uppercase tracking-[0.08em] text-red-600/32">
-                        VÍ DỤ DO AI LÀM RA - KHÔNG PHẢI THÔNG TIN THẬT
-                      </p>
-                    </div>
-                  </div>
-
                   <div className="relative z-10">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 border-b border-slate-300 pb-3">
                       <div>
                         <h4 className="text-3xl font-black tracking-tight text-slate-800">THPT FPT</h4>
                         <p className="mt-1 text-sm text-slate-500">Phòng khám: Lớp 12A6</p>
+                        <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-red-600">
+                          Ví dụ do AI làm ra - Không phải thông tin thật
+                        </p>
                       </div>
 
                       <div className="w-full md:max-w-[360px]">
